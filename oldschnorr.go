@@ -186,7 +186,7 @@ func (key *SchnorrPublicKey) serializeInternal(flag C.uint) (SerializedSchnorrPu
 	if ret != 1 {
 		panic("failed serializing a pubkey. Should never happen (upstream promise to return 1)")
 	} else if cLen != 33 && cLen != 65 {
-		panic("Returned length doesn't match compressed length(33) nor uncompressed length(64), should never happen")
+		panic("Returned length doesn't match compressed length(33) nor uncompressed length(65), should never happen")
 	}
 	return data[:cLen], nil
 }
