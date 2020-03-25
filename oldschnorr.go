@@ -3,6 +3,7 @@ package secp256k1
 // #include "./depend/secp256k1/include/secp256k1_oldschnorr.h"
 import "C"
 import (
+	"bytes"
 	"encoding/hex"
 	"github.com/pkg/errors"
 )
@@ -24,6 +25,37 @@ type SerializedSchnorrPublicKey []byte
 
 // SerializedSchnorrSignature is a is a byte array representing the storage representation of a SchnorrSignature
 type SerializedSchnorrSignature [64]byte
+
+// IsEqual returns true if target is the same as key.
+func (key *SchnorrPublicKey) IsEqual(target *SchnorrPublicKey) bool {
+	if key == nil && target == nil {
+		return true
+	}
+	if key == nil || target == nil {
+		return false
+	}
+	serializedKey, err1 := key.SerializeCompressed()
+	serializedTarget, err2 := target.SerializeCompressed()
+
+	if err1 != nil && err2 != nil { // They're both zeroed, shouldn't happen if a constructor is used.
+		return true
+	}
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return bytes.Equal(serializedKey, serializedTarget)
+}
+
+// IsEqual returns true if target is the same as signature.
+func (signature *SchnorrSignature) IsEqual(target *SchnorrSignature) bool {
+	if signature == nil && target == nil {
+		return true
+	}
+	if signature == nil || target == nil {
+		return false
+	}
+	return *signature.Serialize() == *target.Serialize()
+}
 
 // String returns the SerializedSchnorrPublicKey as the hexadecimal string
 func (serialized *SerializedSchnorrPublicKey) String() string {
@@ -154,7 +186,7 @@ func (key *SchnorrPublicKey) serializeInternal(flag C.uint) (SerializedSchnorrPu
 	if ret != 1 {
 		panic("failed serializing a pubkey. Should never happen (upstream promise to return 1)")
 	} else if cLen != 33 && cLen != 65 {
-		panic("Returned length doesn't match compressed length(33) nor uncompressed length(64), should never happen")
+		panic("Returned length doesn't match compressed length(33) nor uncompressed length(65), should never happen")
 	}
 	return data[:cLen], nil
 }

@@ -223,7 +223,7 @@ func TestMultiSetAddRemove(t *testing.T) {
 		data := [100]byte{}
 		n, err := r.Read(data[:])
 		if err != nil || n != len(data) {
-			t.Fatalf("Failed generating random data '%d' '%s' ", n, err)
+			t.Fatalf("Failed generating random data. read: '%d' bytes. .'%s'", n, err)
 		}
 		set.Add(data[:])
 		list[i] = data
@@ -256,7 +256,7 @@ func BenchmarkMultiSet_Add(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		n, err := r.Read(list[i][:])
 		if err != nil || n != len(list[i]) {
-			b.Fatalf("Failed generating random data '%d' '%s' ", n, err)
+			b.Fatalf("Failed generating random data. read: '%d' bytes. .'%s'", n, err)
 		}
 	}
 	set := NewMultiset()
@@ -278,7 +278,7 @@ func BenchmarkMultiSet_Remove(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		n, err := r.Read(list[i][:])
 		if err != nil || n != len(list[i]) {
-			b.Fatalf("Failed generating random data '%d' '%s' ", n, err)
+			b.Fatalf("Failed generating random data. read: '%d' bytes. .'%s'", n, err)
 		}
 	}
 	set := NewMultiset()
@@ -297,7 +297,7 @@ func BenchmarkMultiSet_Combine(b *testing.B) {
 		data := [100]byte{}
 		n, err := r.Read(data[:])
 		if err != nil || n != len(data) {
-			b.Fatalf("Failed generating random data '%d' '%s' ", n, err)
+			b.Fatalf("Failed generating random data. read: '%d' bytes. .'%s'", n, err)
 		}
 		set.Add(data[:])
 		sets[i] = *set
