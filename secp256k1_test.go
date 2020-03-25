@@ -109,7 +109,7 @@ func TestPrivateKey_Add(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed generating pubkey from '%s'. '%s'", privkey, err)
 		}
-		if *pubkey != *tmpPubKey {
+		if !pubkey.IsEqual(tmpPubKey) {
 			t.Fatalf("tweaked pubkey '%s' doesn't match tweaked privateKey '%s', '%s'", pubkey, tmpPubKey, privkey)
 		}
 		seeds[i].Set(&seedBig)
@@ -145,7 +145,7 @@ func TestPrivateKey_Add(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed generating pubkey from '%s' '%s'", err, privkey)
 		}
-		if *pubkey != *tmpPubKey {
+		if !pubkey.IsEqual(tmpPubKey) {
 			t.Errorf("tweaked pubkey '%s' doesn't match tweaked privateKey '%s', '%s'", pubkey, privkey, tmpPubKey)
 		}
 	}
@@ -156,7 +156,7 @@ func TestPrivateKey_Add(t *testing.T) {
 		t.Errorf("resulting bigint privateKey: '%x' doesn't match original: '%x'", privkeyBig.Bytes(), privkeyBigOriginal.Bytes())
 	}
 
-	if *pubkey != originalPubKey {
+	if !pubkey.IsEqual(&originalPubKey) {
 		t.Errorf("resulting privateKey: '%s' doesn't match original: '%s'", privkey, originalPrivatekey)
 	}
 }
@@ -309,7 +309,7 @@ func TestParseSchnorrPubKey(t *testing.T) {
 			t.Errorf("Failed Parsing the uncompressed public key from privkey: '%s'. '%s'", pubkeyNew2, err)
 		}
 
-		if *pubkey != *pubkeyNew1 || *pubkey != *pubkeyNew2 {
+		if !pubkey.IsEqual(pubkeyNew1) || !pubkey.IsEqual(pubkeyNew2) {
 			t.Errorf("Pubkeys aren't the same: '%s', '%s', '%s'", pubkey, pubkeyNew1, pubkeyNew2)
 		}
 	}
@@ -327,7 +327,7 @@ func TestSignVerifyParseSchnorr(t *testing.T) {
 		msg := Hash{}
 		n, err := r.Read(msg[:])
 		if err != nil || n != 32 {
-			t.Errorf("Failed generating a msg '%d' '%s' ", n, err)
+			t.Errorf("Failed generating a msg. read: '%d' bytes. .'%s'", n, err)
 		}
 		sig1, err := privkey.SchnorrSign(&msg)
 		if err != nil {
@@ -498,6 +498,126 @@ func TestDeterministicSchnorrSignatureGen(t *testing.T) {
 	if !bytes.Equal(serializedSig[:32], decodeHex("2c56731ac2f7a7e7f11518fc7722a166b02438924ca9d8b4d111347b81d07175")) ||
 		!bytes.Equal(serializedSig[32:], decodeHex("71846de67ad3d913a8fdf9d8f3f73161a4c48ae81cb183b214765feb86e255ce")) {
 		t.Error("Failed to generate deterministic schnorr signature")
+	}
+}
+
+func TestSchnorrPublicKey_IsEqual(t *testing.T) {
+	r := rand.New(rand.NewSource(1))
+	goodPrivateKey := fastGeneratePrivateKey(t, r)
+	goodPublicKey, err := goodPrivateKey.SchnorrPublicKey()
+	if err != nil {
+		t.Fatalf("Failed generating pubkey from: '%s'. '%s'", goodPrivateKey, err)
+	}
+	badPublicKey := SchnorrPublicKey{}
+	if badPublicKey.IsEqual(goodPublicKey) {
+		t.Errorf("Empty publickey shouldn't be equal to good one")
+	}
+	if !badPublicKey.IsEqual(&SchnorrPublicKey{}) {
+		t.Errorf("Empty publickey should be equal to another empty pubkey")
+	}
+	var nilPubKey *SchnorrPublicKey = nil
+	if nilPubKey.IsEqual(goodPublicKey) {
+		t.Errorf("nil publickey shouldn't be equal to good one")
+	}
+
+	if !nilPubKey.IsEqual(nil) {
+		t.Errorf("two nil pubkeys should be equal")
+	}
+
+	copyGoodPubkey := *goodPublicKey
+	if !copyGoodPubkey.IsEqual(goodPublicKey) {
+		t.Errorf("A pubkey and its copy should be the same")
+	}
+	goodPrivateKey2 := fastGeneratePrivateKey(t, r)
+	goodPublicKey2, err := goodPrivateKey2.SchnorrPublicKey()
+	if err != nil {
+		t.Fatalf("Failed generating pubkey from: '%s'. '%s'", goodPrivateKey2, err)
+	}
+
+	if goodPublicKey.IsEqual(goodPublicKey2) {
+		t.Errorf("'%s' shouldn't be equal to %s", goodPublicKey, goodPublicKey2)
+	}
+}
+
+func TestSchnorrSignature_IsEqual(t *testing.T) {
+	r := rand.New(rand.NewSource(1))
+	serializedSig := SerializedSchnorrSignature{}
+	n, err := r.Read(serializedSig[:])
+	if err != nil || n != len(serializedSig) {
+		t.Errorf("Failed generating a random signature. read: '%d' bytes.. '%s'", n, err)
+	}
+	goodSignature := DeserializeSchnorrSignature(&serializedSig)
+
+	emptySignature := SchnorrSignature{}
+	if emptySignature.IsEqual(goodSignature) {
+		t.Errorf("Empty signature shouldn't be equal to good one")
+	}
+	if !emptySignature.IsEqual(&SchnorrSignature{}) {
+		t.Errorf("Empty signature should be equal to another empty signature")
+	}
+	var nilSignature *SchnorrSignature = nil
+	if nilSignature.IsEqual(goodSignature) {
+		t.Errorf("nil signature shouldn't be equal to good one")
+	}
+
+	if !nilSignature.IsEqual(nil) {
+		t.Errorf("two nil signatures should be equal")
+	}
+
+	copyGoodSignature := *goodSignature
+	if !copyGoodSignature.IsEqual(goodSignature) {
+		t.Errorf("A signature and its copy should be the same")
+	}
+
+	serializedSig2 := SerializedSchnorrSignature{}
+	n, err = r.Read(serializedSig2[:])
+	if err != nil || n != len(serializedSig2) {
+		t.Errorf("Failed generating a random signature. read: '%d' bytes.. '%s'", n, err)
+	}
+
+	goodSignature2 := DeserializeSchnorrSignature(&serializedSig2)
+	if goodSignature.IsEqual(goodSignature2) {
+		t.Errorf("'%s' shouldn't be equal to %s", goodSignature, goodSignature2)
+	}
+}
+
+func TestHash_IsEqual(t *testing.T) {
+	r := rand.New(rand.NewSource(1))
+	goodHash := &Hash{}
+	n, err := r.Read(goodHash[:])
+	if err != nil || n != len(goodHash) {
+		t.Errorf("Failed generating a random hash. read: '%d' bytes.. '%s'", n, err)
+	}
+
+	emptyHash := Hash{}
+	if emptyHash.IsEqual(goodHash) {
+		t.Errorf("Empty hash shouldn't be equal to filled one")
+	}
+	if !emptyHash.IsEqual(&Hash{}) {
+		t.Errorf("Empty hash should be equal to another empty hash")
+	}
+	var nilHash *Hash = nil
+	if nilHash.IsEqual(goodHash) {
+		t.Errorf("nil hash shouldn't be equal to good one")
+	}
+
+	if !nilHash.IsEqual(nil) {
+		t.Errorf("two nil hashes should be equal")
+	}
+
+	copyGoodHash := *goodHash
+	if !copyGoodHash.IsEqual(goodHash) {
+		t.Errorf("A hash and its copy should be the same")
+	}
+
+	goodHash2 := &Hash{}
+	n, err = r.Read(goodHash2[:])
+	if err != nil || n != len(goodHash2) {
+		t.Errorf("Failed generating a random hash. read: '%d' bytes. .'%s'", n, err)
+	}
+
+	if goodHash.IsEqual(goodHash2) {
+		t.Errorf("'%s' shouldn't be equal to %s", goodHash, goodHash2)
 	}
 }
 
