@@ -464,17 +464,21 @@ func TestSchnorrSignatureVerify(t *testing.T) {
 		},
 	}
 
-	sig64 := SerializedSchnorrSignature{}
 	msg32 := Hash{}
 	for i, test := range tests {
 		pubkey, err := DeserializeSchnorrPubKey(test.pubKey)
 		if err != nil {
 			t.Fatal(err)
 		}
-		copy(sig64[:], test.signature)
-		sig := DeserializeSchnorrSignature(&sig64)
+		sig, err := DeserializeSchnorrSignatureFromSlice(test.signature)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-		copy(msg32[:], test.message)
+		err = msg32.SetBytes(test.message)
+		if err != nil {
+			t.Fatal(err)
+		}
 		valid := pubkey.SchnorrVerify(&msg32, sig)
 		if valid != test.valid {
 			t.Errorf("Schnorr test vector '%d' expected verification: '%t', got: '%t'", i, valid, test.valid)
@@ -484,12 +488,17 @@ func TestSchnorrSignatureVerify(t *testing.T) {
 
 func TestDeterministicSchnorrSignatureGen(t *testing.T) {
 	// Test vector from Bitcoin-ABC
-	privKeyBytes := SerializedPrivateKey{}
-	copy(privKeyBytes[:], decodeHex("12b004fff7f4b69ef8650e767f18f11ede158148b425660723b9f9a66e61f747"))
-	privKey, _ := DeserializePrivateKey(&privKeyBytes)
+
+	privKey, err := DeserializePrivateKeyFromSlice(decodeHex("12b004fff7f4b69ef8650e767f18f11ede158148b425660723b9f9a66e61f747"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	msg := Hash{}
-	copy(msg[:], decodeHex("5255683da567900bfd3e786ed8836a4e7763c221bf1ac20ece2a5171b9199e8a"))
+	err = msg.SetBytes(decodeHex("5255683da567900bfd3e786ed8836a4e7763c221bf1ac20ece2a5171b9199e8a"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	sig, err := privKey.SchnorrSign(&msg)
 	if err != nil {
 		t.Fatal(err)
