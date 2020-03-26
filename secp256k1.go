@@ -44,8 +44,13 @@ func init() {
 	}
 }
 
-// HashSize of array used to store hashes. See Hash.
-const HashSize = 32
+const (
+	// HashSize of array used to store hashes. See Hash.
+	HashSize = 32
+
+	// SerializedPrivateKeySize defines the length in bytes of SerializedPrivateKey
+	SerializedPrivateKeySize = 32
+)
 
 // Hash is a type encapsulating the result of hashing some unknown sized data.
 // it typically represents Sha256 / Double Sha256.
@@ -81,11 +86,11 @@ func (hash *Hash) String() string {
 // PrivateKey is a type representing a Secp256k1 private key.
 // This private key can be used to create Schnorr/ECDSA signatures
 type PrivateKey struct {
-	privateKey [32]byte
+	privateKey [SerializedPrivateKeySize]byte
 }
 
 // SerializedPrivateKey is a byte array representing the storage representation of a PrivateKey
-type SerializedPrivateKey [32]byte
+type SerializedPrivateKey [SerializedPrivateKeySize]byte
 
 // String returns the PrivateKey as the hexadecimal string
 func (key *SerializedPrivateKey) String() string {
@@ -108,6 +113,19 @@ func DeserializePrivateKey(data *SerializedPrivateKey) (key *PrivateKey, err err
 	}
 
 	return &PrivateKey{*data}, nil
+}
+
+// DeserializePrivateKeyFromSlice returns a PrivateKey type from a serialized private key slice.
+// will verify that it's 32 byte and it's a valid private key(Group Order > key > 0)
+func DeserializePrivateKeyFromSlice(data []byte) (key *PrivateKey, err error) {
+	if len(data) != SerializedPrivateKeySize {
+		return nil, errors.Errorf("invalid private key length got %d, expected %d", len(data),
+			SerializedPrivateKeySize)
+	}
+
+	serializedKey := &SerializedPrivateKey{}
+	copy(serializedKey[:], data)
+	return DeserializePrivateKey(serializedKey)
 }
 
 // GeneratePrivateKey generates a random valid private key from `crypto/rand`

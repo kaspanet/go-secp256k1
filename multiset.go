@@ -7,6 +7,9 @@ import (
 	"github.com/pkg/errors"
 )
 
+// SerializedMultiSetSize defines the length in bytes of SerializedMultiSet
+const SerializedMultiSetSize = 64
+
 // MultiSet is a type used to create an Elliptic Curve Multiset Hash
 // which is a rolling(homomorphic) hash that you can add and remove elements from
 // and receiving the same resulting hash as-if you never hashed that element.
@@ -17,7 +20,7 @@ type MultiSet struct {
 }
 
 // SerializedMultiSet is a is a byte array representing the storage representation of a MultiSet
-type SerializedMultiSet [64]byte
+type SerializedMultiSet [SerializedMultiSetSize]byte
 
 // String returns the SerializedMultiSet as the hexadecimal string
 func (serialized *SerializedMultiSet) String() string {
@@ -113,4 +116,16 @@ func DeserializeMultiSet(serialized *SerializedMultiSet) (multiset *MultiSet, er
 		return nil, errors.New("failed parsing the multiset")
 	}
 	return
+}
+
+// DeserializeMultiSetFromSlice returns a MultiSet type from a from a a serialized multiset slice.
+// will verify that it's SerializedMultiSetSize bytes long and a valid multiset.
+func DeserializeMultiSetFromSlice(newMultiSet []byte) (multiset *MultiSet, err error) {
+	if len(newMultiSet) != SerializedMultiSetSize {
+		return nil, errors.Errorf("invalid multiset length got %d, expected %d", len(newMultiSet),
+			SerializedMultiSetSize)
+	}
+	serializedMultiSet := &SerializedMultiSet{}
+	copy(serializedMultiSet[:], newMultiSet)
+	return DeserializeMultiSet(serializedMultiSet)
 }

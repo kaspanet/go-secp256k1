@@ -8,6 +8,17 @@ import (
 	"github.com/pkg/errors"
 )
 
+const (
+	// SerializedSchnorrPublicKeyCompressedSize defines the length in bytes of SerializedSchnorrPublicKeyCompressed
+	SerializedSchnorrPublicKeyCompressedSize = 33
+
+	// SerializedSchnorrPublicKeyUncompressedSize defines the length in bytes of SerializedSchnorrPublicKeyUncompressed
+	SerializedSchnorrPublicKeyUncompressedSize = 65
+
+	// SerializedSchnorrSignatureSize defines the length in bytes of SerializedSchnorrSignature
+	SerializedSchnorrSignatureSize = 64
+)
+
 // SchnorrPublicKey is a PublicKey type used to sign and verify Schnorr signatures.
 // The struct itself is an opaque data type that should only be created via the supplied methods.
 type SchnorrPublicKey struct {
@@ -17,14 +28,14 @@ type SchnorrPublicKey struct {
 // SchnorrSignature is a type representing a Schnorr Signature.
 // The struct itself is an opaque data type that should only be created via the supplied methods.
 type SchnorrSignature struct {
-	signature [64]byte
+	signature [SerializedSchnorrSignatureSize]byte
 }
 
 // SerializedSchnorrPublicKey is a is a byte array representing the storage representation of a compressed or uncompressed SchnorrPublicKey
 type SerializedSchnorrPublicKey []byte
 
 // SerializedSchnorrSignature is a is a byte array representing the storage representation of a SchnorrSignature
-type SerializedSchnorrSignature [64]byte
+type SerializedSchnorrSignature [SerializedSchnorrSignatureSize]byte
 
 // IsEqual returns true if target is the same as key.
 func (key *SchnorrPublicKey) IsEqual(target *SchnorrPublicKey) bool {
@@ -81,6 +92,18 @@ func (signature *SchnorrSignature) Serialize() *SerializedSchnorrSignature {
 // DeserializeSchnorrSignature deserializes a 64 byte serialized schnorr signature into a SchnorrSignature type.
 func DeserializeSchnorrSignature(serializedSignature *SerializedSchnorrSignature) *SchnorrSignature {
 	return &SchnorrSignature{signature: *serializedSignature}
+}
+
+// DeserializeSchnorrSignatureFromSlice returns a SchnorrSignature type from a serialized signature slice.
+// will verify that it's SerializedSchnorrSignatureSize bytes long
+func DeserializeSchnorrSignatureFromSlice(data []byte) (signature *SchnorrSignature, err error) {
+	if len(data) != SerializedSchnorrSignatureSize {
+		return nil, errors.Errorf("invalid schnorr signature length got %d, expected %d", len(data),
+			SerializedSchnorrSignatureSize)
+	}
+	signature = &SchnorrSignature{}
+	copy(signature.signature[:], data)
+	return
 }
 
 // String returns the SchnorrPublicKey as the hexadecimal string
@@ -185,16 +208,16 @@ func (key *SchnorrPublicKey) serializeInternal(flag C.uint) (SerializedSchnorrPu
 	ret := C.secp256k1_ec_pubkey_serialize(C.secp256k1_context_no_precomp, cPtr, &cLen, &key.pubkey, flag)
 	if ret != 1 {
 		panic("failed serializing a pubkey. Should never happen (upstream promise to return 1)")
-	} else if cLen != 33 && cLen != 65 {
+	} else if cLen != SerializedSchnorrPublicKeyCompressedSize && cLen != SerializedSchnorrPublicKeyUncompressedSize {
 		panic("Returned length doesn't match compressed length(33) nor uncompressed length(65), should never happen")
 	}
 	return data[:cLen], nil
 }
 
 func supportedKey(key []byte) bool {
-	if len(key) == 33 && (key[0] == 0x02 || key[0] == 0x03) {
+	if len(key) == SerializedSchnorrPublicKeyCompressedSize && (key[0] == 0x02 || key[0] == 0x03) {
 		return true
-	} else if len(key) == 65 && key[0] == 0x04 {
+	} else if len(key) == SerializedSchnorrPublicKeyUncompressedSize && key[0] == 0x04 {
 		return true
 	} else {
 		return false
