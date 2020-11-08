@@ -9,13 +9,11 @@ import (
 	"github.com/pkg/errors"
 )
 
-const (
-	// SerializedSchnorrPublicKeySize defines the length in bytes of a SerializedSchnorrPublicKey
-	SerializedSchnorrPublicKeySize = 32
+// SerializedSchnorrPublicKeySize defines the length in bytes of a SerializedSchnorrPublicKey
+const SerializedSchnorrPublicKeySize = 32
 
-	// SerializedSchnorrSignatureSize defines the length in bytes of SerializedSchnorrSignature
-	SerializedSchnorrSignatureSize = 64
-)
+// errZeroedPubkey is the error returned when using a zeroed pubkey
+var errZeroedPubkey = errors.New("the public key is zeroed, which isn't a valid SchnorrPublicKey")
 
 // SchnorrPublicKey is a PublicKey type used to sign and verify Schnorr signatures.
 // The struct itself is an opaque data type that should only be created via the supplied methods.
@@ -23,17 +21,8 @@ type SchnorrPublicKey struct {
 	pubkey C.secp256k1_xonly_pubkey
 }
 
-// SchnorrSignature is a type representing a Schnorr Signature.
-// The struct itself is an opaque data type that should only be created via the supplied methods.
-type SchnorrSignature struct {
-	signature [SerializedSchnorrSignatureSize]byte
-}
-
 // SerializedSchnorrPublicKey is a is a byte array representing the storage representation of a compressed or uncompressed SchnorrPublicKey
-type SerializedSchnorrPublicKey [32]byte
-
-// SerializedSchnorrSignature is a is a byte array representing the storage representation of a SchnorrSignature
-type SerializedSchnorrSignature [SerializedSchnorrSignatureSize]byte
+type SerializedSchnorrPublicKey [SerializedSchnorrPublicKeySize]byte
 
 // IsEqual returns true if target is the same as key.
 func (key *SchnorrPublicKey) IsEqual(target *SchnorrPublicKey) bool {
@@ -44,64 +33,26 @@ func (key *SchnorrPublicKey) IsEqual(target *SchnorrPublicKey) bool {
 		return false
 	}
 	serializedKey, err1 := key.Serialize()
+	if err1 != nil && !errors.Is(err1, errZeroedPubkey) {
+		panic(errors.Wrap(err1, "Unexpected error when serrializing key"))
+	}
 	serializedTarget, err2 := target.Serialize()
+	if err2 != nil && !errors.Is(err2, errZeroedPubkey) {
+		panic(errors.Wrap(err1, "Unexpected error when serrializing key"))
+	}
 
-	if err1 != nil && err2 != nil { // They're both zeroed, shouldn't happen if a constructor is used.
+	if errors.Is(err1, errZeroedPubkey) && errors.Is(err2, errZeroedPubkey) { // They're both zeroed, shouldn't happen if a constructor is used.
 		return true
 	}
-	if err1 != nil || err2 != nil {
+	if errors.Is(err1, errZeroedPubkey) || errors.Is(err2, errZeroedPubkey) { // Only one of them is zeroed
 		return false
 	}
 	return *serializedKey == *serializedTarget
 }
 
-// IsEqual returns true if target is the same as signature.
-func (signature *SchnorrSignature) IsEqual(target *SchnorrSignature) bool {
-	if signature == nil && target == nil {
-		return true
-	}
-	if signature == nil || target == nil {
-		return false
-	}
-	return *signature.Serialize() == *target.Serialize()
-}
-
-// String returns the SerializedSchnorrPublicKey as the hexadecimal string
+// String returns the SerializedSchnorrPublicKey as a hexadecimal string
 func (serialized SerializedSchnorrPublicKey) String() string {
 	return hex.EncodeToString(serialized[:])
-}
-
-// String returns the SerializedSchnorrSignature as the hexadecimal string
-func (serialized SerializedSchnorrSignature) String() string {
-	return hex.EncodeToString(serialized[:])
-}
-
-// String returns the SchnorrSignature as the hexadecimal string
-func (signature SchnorrSignature) String() string {
-	return signature.Serialize().String()
-}
-
-// Serialize returns a 64 byte serialized signature
-func (signature *SchnorrSignature) Serialize() *SerializedSchnorrSignature {
-	ret := SerializedSchnorrSignature(signature.signature)
-	return &ret
-}
-
-// DeserializeSchnorrSignature deserializes a 64 byte serialized schnorr signature into a SchnorrSignature type.
-func DeserializeSchnorrSignature(serializedSignature *SerializedSchnorrSignature) *SchnorrSignature {
-	return &SchnorrSignature{signature: *serializedSignature}
-}
-
-// DeserializeSchnorrSignatureFromSlice returns a SchnorrSignature type from a serialized signature slice.
-// will verify that it's SerializedSchnorrSignatureSize bytes long
-func DeserializeSchnorrSignatureFromSlice(data []byte) (signature *SchnorrSignature, err error) {
-	if len(data) != SerializedSchnorrSignatureSize {
-		return nil, errors.Errorf("invalid schnorr signature length got %d, expected %d", len(data),
-			SerializedSchnorrSignatureSize)
-	}
-	signature = &SchnorrSignature{}
-	copy(signature.signature[:], data)
-	return
 }
 
 // String returns the SchnorrPublicKey as the hexadecimal string
@@ -142,7 +93,7 @@ func (key *SchnorrPublicKey) Serialize() (*SerializedSchnorrPublicKey, error) {
 	serialized := SerializedSchnorrPublicKey{}
 	cPtr := (*C.uchar)(&serialized[0])
 	if isZeroed(key.pubkey.data[:]) {
-		return nil, errors.New("the public key is zeroed, which isn't a valid SchnorrPublicKey")
+		return nil, errZeroedPubkey
 	}
 
 	ret := C.secp256k1_xonly_pubkey_serialize(C.secp256k1_context_no_precomp, cPtr, &key.pubkey)
