@@ -1,7 +1,6 @@
 package secp256k1
 
 import (
-	"bytes"
 	"encoding/hex"
 	"fmt"
 	"math/big"
@@ -20,33 +19,56 @@ func intTo32Bytes(i *big.Int) [32]byte {
 	return res
 }
 
-func fastGeneratePrivateKey(t *testing.T, r *rand.Rand) (key *PrivateKey) {
-	buf := SerializedPrivateKey{}
+func negateSecp256k1Tweak(tweak []byte) {
+	bigTweak := new(big.Int).SetBytes(tweak)
+	bigTweak.Neg(bigTweak)
+	bigTweak.Mod(bigTweak, Secp256k1Order)
+	res := intTo32Bytes(bigTweak)
+	copy(tweak, res[:])
+}
+
+func fastGenerateTweak(t *testing.T, r *rand.Rand) *[32]byte {
+	buf := [32]byte{}
 	for {
 		n, err := r.Read(buf[:])
 		if err != nil || n != len(buf) {
-			t.Fatalf("Failed generating a privatekey '%s'", err)
+			t.Fatalf("Failed generating 32 random bytes '%s'", err)
 		}
-		privkey, err := DeserializePrivateKey(&buf)
+		_, err = DeserializePrivateKey((*SerializedPrivateKey)(&buf))
 		if err == nil {
-			return privkey
+			return &buf
 		}
+	}
+}
+
+func fastGenerateKeyPair(t *testing.T, r *rand.Rand) (key *SchnorrKeyPair) {
+	buf := fastGenerateTweak(t, r)
+	keypair, err := DeserializePrivateKey((*SerializedPrivateKey)(buf))
+	if err != nil {
+		t.Fatalf("A valid tweak should be a valid private key: '%s'", err)
+	}
+	return keypair
+}
+
+func setPrivateKey(keypair *SchnorrKeyPair, bytes []byte) {
+	for i := 0; i < len(bytes); i++ {
+		keypair.keypair.data[i] = _Ctype_uchar(bytes[i])
 	}
 }
 
 func TestParseSerializePrivateKey(t *testing.T) {
 	r := rand.New(rand.NewSource(1))
 	for i := 0; i < loopsN; i++ {
-		privkey := fastGeneratePrivateKey(t, r)
+		keypair := fastGenerateKeyPair(t, r)
 
-		serialized := privkey.Serialize()
+		serialized := keypair.SerializePrivateKey()
 		privkey2, err := DeserializePrivateKey(serialized)
 		if err != nil {
 			t.Errorf("Failed parsing privateKey '%s'", err)
 		}
 
-		if *privkey != *privkey2 {
-			t.Errorf("Privkeys aren't equal '%s' '%s'", privkey2, privkey)
+		if *keypair != *privkey2 {
+			t.Errorf("Privkeys aren't equal '%s' '%s'", privkey2, keypair)
 		}
 	}
 }
@@ -60,228 +82,156 @@ func TestGeneratePrivateKey(t *testing.T) {
 
 func TestPrivateKey_Add_Fail(t *testing.T) {
 	r := rand.New(rand.NewSource(1))
-	privkey := fastGeneratePrivateKey(t, r)
-	privkeyInverse := *privkey
-	privkeyInverse.Negate()
-	err := privkey.Add(privkeyInverse.privateKey)
+	keypair := fastGenerateKeyPair(t, r)
+	privkeyInverse := keypair.SerializePrivateKey()
+	negateSecp256k1Tweak(privkeyInverse[:])
+	err := keypair.Add(*privkeyInverse)
 	if err == nil {
-		t.Errorf("Adding the inverse of itself should fail, '%s', '%s', '%s'", privkey, privkeyInverse, err)
+		t.Errorf("Adding the inverse of itself should fail, '%s', '%s', '%s'", keypair, privkeyInverse, err)
 	}
-	privkey = fastGeneratePrivateKey(t, r)
+	keypair = fastGenerateKeyPair(t, r)
 	oufOfBounds := [32]byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
-	err = privkey.Add(oufOfBounds)
+	err = keypair.Add(oufOfBounds)
 	if err == nil {
-		t.Errorf("Adding a tweak bigger than the order should fail, '%s', '%x' '%s'", privkey, oufOfBounds, err)
+		t.Errorf("Adding a tweak bigger than the order should fail, '%s', '%x' '%s'", keypair, oufOfBounds, err)
 	}
 }
 
 func TestPrivateKey_Add(t *testing.T) {
 	r := rand.New(rand.NewSource(1))
-	privkey := fastGeneratePrivateKey(t, r)
-	pubkey, err := privkey.SchnorrPublicKey()
+	keypair := fastGenerateKeyPair(t, r)
+	pubkey, wasOdd, err := keypair.schnorrPublicKeyInternal()
 	if err != nil {
 		t.Fatal(err)
 	}
-	originalPubKey := *pubkey
-	originalPrivatekey := *privkey
-	privkeyBig := new(big.Int).SetBytes(privkey.privateKey[:])
+	privkeyBig := new(big.Int).SetBytes(keypair.SerializePrivateKey()[:])
 	seedBig := big.Int{}
-	seeds := make([]big.Int, loopsN)
-	privkeyBigOriginal := new(big.Int).Set(privkeyBig)
 
 	for i := 0; i < loopsN; i++ {
-		seed := fastGeneratePrivateKey(t, r)
-		err := privkey.Add(seed.privateKey)
-		if err != nil {
-			t.Errorf("failed adding seed: '%s' to key: '%s'", seed, privkey)
+		if wasOdd { // Schnorr secret keys are always even
+			privkeyBig.Neg(privkeyBig)
 		}
-		err = pubkey.Add(seed.privateKey)
-		if err != nil { // This shouldn't fail if the same operation for the privateKey didn't fail.
-			t.Error(err)
-		}
-		seedBig.SetBytes(seed.privateKey[:])
+		seed := *fastGenerateTweak(t, r)
+		seedBig.SetBytes(seed[:])
+
 		privkeyBig.Add(privkeyBig, &seedBig)
 		privkeyBig.Mod(privkeyBig, Secp256k1Order)
-		if intTo32Bytes(privkeyBig) != privkey.privateKey {
-			t.Errorf("Add operation failed, '%s' != '%s'", intTo32Bytes(privkeyBig), privkey.privateKey)
-		}
-		tmpPubKey, err := privkey.SchnorrPublicKey()
+		err := keypair.Add(seed)
 		if err != nil {
-			t.Fatalf("Failed generating pubkey from '%s'. '%s'", privkey, err)
+			t.Fatalf("failed adding seed: '%s' to key: '%s'", seed, keypair)
 		}
-		if !pubkey.IsEqual(tmpPubKey) {
-			t.Fatalf("tweaked pubkey '%s' doesn't match tweaked privateKey '%s', '%s'", pubkey, tmpPubKey, privkey)
-		}
-		seeds[i].Set(&seedBig)
-	}
-
-	for i := 0; i < loopsN; i++ {
-		slicedSeed := seeds[i].Bytes()
-		seed := [32]byte{}
-		copy(seed[32-len(slicedSeed):], slicedSeed)
-		// By negating before and after it has the same affect as subtracting
-		// -(-A+B) = A-B
-		privkey.Negate()
-		err := privkey.Add(seed)
-		if err != nil {
-			t.Errorf("failed adding seed: '%x' to key: '%s' i: '%d'", seed, privkey, i)
-		}
-		privkey.Negate()
-
-		pubkey.Negate()
-		err = pubkey.Add(seed)
+		wasOdd, err = pubkey.addInternal(seed)
 		if err != nil { // This shouldn't fail if the same operation for the privateKey didn't fail.
 			t.Fatal(err)
 		}
-		pubkey.Negate()
 
-		t.Logf("seed: big: %x, array: %x", seeds[i].Bytes(), seed)
-		privkeyBig.Sub(privkeyBig, &seeds[i])
-		privkeyBig.Mod(privkeyBig, Secp256k1Order)
-		if intTo32Bytes(privkeyBig) != privkey.privateKey {
-			t.Fatalf("Add operation failed, '%x' != '%s'", intTo32Bytes(privkeyBig), privkey)
-		}
-		tmpPubKey, err := privkey.SchnorrPublicKey()
+		tmpPubKey, err := keypair.SchnorrPublicKey()
 		if err != nil {
-			t.Fatalf("Failed generating pubkey from '%s' '%s'", err, privkey)
+			t.Fatalf("Failed generating pubkey from '%s'. '%s'", keypair, err)
+		}
+
+		if intTo32Bytes(privkeyBig) != *keypair.SerializePrivateKey() {
+			t.Fatalf("Add operation failed, i=%d '%x' != '%s'", i, intTo32Bytes(privkeyBig), keypair.SerializePrivateKey())
 		}
 		if !pubkey.IsEqual(tmpPubKey) {
-			t.Errorf("tweaked pubkey '%s' doesn't match tweaked privateKey '%s', '%s'", pubkey, privkey, tmpPubKey)
+			t.Fatalf("tweaked pubkey '%s' doesn't match tweaked privateKey '%s', '%s'", pubkey, tmpPubKey, keypair)
 		}
-	}
-	if privkey.privateKey != originalPrivatekey.privateKey {
-		t.Errorf("resulting privateKey: '%s' doesn't match original: '%s'", privkey, originalPrivatekey)
-	}
-	if privkeyBigOriginal.Cmp(privkeyBig) != 0 {
-		t.Errorf("resulting bigint privateKey: '%x' doesn't match original: '%x'", privkeyBig.Bytes(), privkeyBigOriginal.Bytes())
-	}
-
-	if !pubkey.IsEqual(&originalPubKey) {
-		t.Errorf("resulting privateKey: '%s' doesn't match original: '%s'", privkey, originalPrivatekey)
 	}
 }
 
 func TestParseSchnorrPubKeyFail(t *testing.T) {
-	r := rand.New(rand.NewSource(1))
-	zeros := [65]byte{}
+	zeros := [32]byte{}
+	max := [32]byte{}
+	for i := range max {
+		max[i] = 0xff
+	}
 	_, err := DeserializeSchnorrPubKey(zeros[:])
 	if err == nil {
-		t.Errorf("Shouldn't parse 65 zeros as a pubkey '%x'", zeros)
+		t.Errorf("Shouldn't parse 32 zeros as a pubkey '%x'", zeros)
 	}
-	_, err = DeserializeSchnorrPubKey(zeros[:33])
+	_, err = DeserializeSchnorrPubKey(zeros[:30])
 	if err == nil {
-		t.Errorf("Shouldn't parse 33 zeros as a pubkey '%x'", zeros[:33])
+		t.Errorf("Shouldn't parse 30 zeros as a pubkey '%x'", zeros[:30])
 	}
-	zeros[0] = 0x04
-	_, err = DeserializeSchnorrPubKey(zeros[:])
+	_, err = DeserializeSchnorrPubKey(max[:])
 	if err == nil {
-		t.Errorf("Shouldn't parse zeroed x and y as pubkey '%x'", zeros)
-	}
-	pubkey, err := fastGeneratePrivateKey(t, r).SchnorrPublicKey()
-	if err != nil {
-		t.Fatalf("Failed generating a random pubkey: '%s'", err)
-	}
-	compressed, err := pubkey.SerializeCompressed()
-	if err != nil {
-		t.Fatalf("Failed serializing a pubkey: '%s' '%s'", pubkey, err)
-	}
-	oddnessByte := compressed[0]
-	compressed[0] = 0x07
-	_, err = DeserializeSchnorrPubKey(compressed[:])
-	if err == nil {
-		t.Errorf("Shouldn't parse a compressed key starting with 0x07 '%x'", compressed)
-	}
-	uncompressed, err := pubkey.SerializeUncompressed()
-	if err != nil {
-		t.Fatalf("Failed serializing a pubkey: '%s' '%s'", pubkey, err)
-	}
-	uncompressed[0] = oddnessByte
-	_, err = DeserializeSchnorrPubKey(uncompressed[:])
-	if err == nil {
-		t.Errorf("Shouldn't parse an uncompressed key starting with 0x2/0x03 '%x'", uncompressed)
-	}
-	uncompressed[0] = oddnessByte + 0x04
-	_, err = DeserializeSchnorrPubKey(uncompressed[:])
-	if err == nil {
-		t.Errorf("Shouldn't parse a weird hybrid pubkey '%x'", uncompressed)
-	}
-	uncompressed[0] = 0x04
-	uncompressed[64] += 0x01
-	_, err = DeserializeSchnorrPubKey(uncompressed[:])
-	if err == nil {
-		t.Errorf("Shouldn't parse a point with invalid y coordinate '%x'", uncompressed)
+		t.Errorf("Shouldn't parse 32 0xFF as a pubkey '%x' (it's above the field order)", max)
 	}
 }
 
 func TestSchnorrPublicKey_SerializeFail(t *testing.T) {
 	pubkey := SchnorrPublicKey{}
-	_, err := pubkey.SerializeCompressed()
+	_, err := pubkey.Serialize()
 	if err == nil {
 		t.Errorf("Zeroed public key isn't serializable as compressed")
-	}
-	_, err = pubkey.SerializeUncompressed()
-	if err == nil {
-		t.Errorf("Zeroed public key isn't serializable as uncompressed")
 	}
 }
 
 func TestBadPrivateKeyPublicKeyFail(t *testing.T) {
 	r := rand.New(rand.NewSource(1))
-	goodPrivateKey := fastGeneratePrivateKey(t, r)
-	goodPublicKey, err := goodPrivateKey.SchnorrPublicKey()
+	goodKeyPair := fastGenerateKeyPair(t, r)
+	goodPublicKey, err := goodKeyPair.SchnorrPublicKey()
 	if err != nil {
-		t.Fatalf("Failed generating pubkey from: '%s'. '%s'", goodPrivateKey, err)
+		t.Fatalf("Failed generating pubkey from: '%s'. '%s'", goodKeyPair, err)
 	}
 	goodPublicKeyBackup := *goodPublicKey
-	goodPrivateKeyBackup := *goodPrivateKey
-	msg := Hash(fastGeneratePrivateKey(t, r).privateKey)
-	privkey := PrivateKey{}
+	goodKeyPairBackup := *goodKeyPair
+	msg := Hash(*fastGenerateTweak(t, r))
+	keypair := SchnorrKeyPair{}
+	var zeros32 [32]byte
 
-	_, err1 := privkey.SchnorrPublicKey()
-	_, err2 := privkey.SchnorrSign(&msg)
-	_, err3 := DeserializePrivateKey(privkey.Serialize())
-	err4 := goodPrivateKey.Add(privkey.privateKey)
-	err5 := goodPublicKey.Add(privkey.privateKey)
-	if err1 == nil || err2 == nil || err3 == nil {
-		t.Errorf("A zeroed key is invalid, err1: '%s', err2: '%s', err3: '%s'", err1, err2, err3)
+	_, err1 := keypair.SchnorrPublicKey()
+	_, err2 := keypair.SchnorrSign(&msg)
+	err3 := keypair.Add(zeros32)
+	_, err4 := DeserializePrivateKey(keypair.SerializePrivateKey())
+	if err1 == nil || err2 == nil || err3 == nil || err4 == nil {
+		t.Errorf("A zeroed key is invalid, err1: '%s', err2: '%s', err3: '%s', err4: '%s'", err1, err2, err3, err4)
 	}
-	if err4 != nil || err5 != nil {
-		t.Errorf("It should be possible to add zero to a key, err4: '%s', err5: '%s'", err4, err5)
+
+	err5 := goodKeyPair.Add(zeros32)
+	err6 := goodPublicKey.Add(zeros32)
+	if err5 != nil || err6 != nil {
+		t.Errorf("It should be possible to add zero to a key, err4: '%s', err5: '%s'", err5, err6)
 	}
-	copy(privkey.privateKey[:], Secp256k1Order.Bytes())
-	_, err1 = privkey.SchnorrPublicKey()
-	_, err2 = privkey.SchnorrSign(&msg)
-	_, err3 = DeserializePrivateKey(privkey.Serialize())
-	*goodPrivateKey = goodPrivateKeyBackup
+
+	setPrivateKey(&keypair, Secp256k1Order.Bytes())
+	_, err1 = keypair.SchnorrPublicKey()
+	_, err2 = keypair.SchnorrSign(&msg)
+	_, err3 = DeserializePrivateKey(keypair.SerializePrivateKey())
+	*goodKeyPair = goodKeyPairBackup
 	*goodPublicKey = goodPublicKeyBackup
-	err4 = goodPrivateKey.Add(privkey.privateKey)
-	err5 = goodPublicKey.Add(privkey.privateKey)
+	err4 = goodKeyPair.Add(intTo32Bytes(Secp256k1Order))
+	err5 = goodPublicKey.Add(intTo32Bytes(Secp256k1Order))
 	if err1 == nil || err2 == nil || err3 == nil || err4 == nil || err5 == nil {
 		t.Errorf("the group order isn't a valid key, err1: '%s', err2: '%s', err3: '%s', err4: '%s', err5: '%s'", err1, err2, err3, err4, err5)
 	}
+	keypair = *fastGenerateKeyPair(t, r)
 	orderPlusOne := new(big.Int).SetInt64(1)
 	orderPlusOne.Add(orderPlusOne, Secp256k1Order)
-	copy(privkey.privateKey[:], orderPlusOne.Bytes())
-	_, err1 = privkey.SchnorrPublicKey()
-	_, err2 = privkey.SchnorrSign(&msg)
-	_, err3 = DeserializePrivateKey(privkey.Serialize())
-	*goodPrivateKey = goodPrivateKeyBackup
-	*goodPublicKey = goodPublicKeyBackup
-	err4 = goodPrivateKey.Add(privkey.privateKey)
-	err5 = goodPublicKey.Add(privkey.privateKey)
-	if err1 == nil || err2 == nil || err3 == nil || err4 == nil || err5 == nil {
-		t.Errorf("A key bigger than the group order isn't a valid key, err1: '%s', err2: '%s', err3: '%s', err4: '%s', err5: '%s'", err1, err2, err3, err4, err5)
+	setPrivateKey(&keypair, orderPlusOne.Bytes())
+	orderPlusOneArray := intTo32Bytes(orderPlusOne)
+	_, err = DeserializePrivateKeyFromSlice(orderPlusOneArray[:])
+	if err1 == nil || err2 == nil || err3 == nil || err4 == nil {
+		t.Errorf("A key bigger than the group order isn't a valid key, err: '%s'", err)
 	}
-	OrderMinusOne := new(big.Int).SetInt64(1)
-	orderPlusOne.Sub(Secp256k1Order, OrderMinusOne)
-	copy(privkey.privateKey[:], orderPlusOne.Bytes())
-	_, err1 = privkey.SchnorrPublicKey()
-	_, err2 = privkey.SchnorrSign(&msg)
-	_, err3 = DeserializePrivateKey(privkey.Serialize())
-	*goodPrivateKey = goodPrivateKeyBackup
+	*goodKeyPair = goodKeyPairBackup
 	*goodPublicKey = goodPublicKeyBackup
-	err4 = goodPrivateKey.Add(privkey.privateKey)
-	err5 = goodPublicKey.Add(privkey.privateKey)
+
+	err1 = goodKeyPair.Add(intTo32Bytes(orderPlusOne))
+	err2 = goodPublicKey.Add(intTo32Bytes(orderPlusOne))
+	if err1 == nil || err2 == nil {
+		t.Errorf("A tweak bigger than the group order isn't a valid tweak, err1: '%s', err2: '%s'", err1, err2)
+	}
+	orderMinusOne := new(big.Int).Sub(Secp256k1Order, new(big.Int).SetInt64(1))
+	orderPlusOne = nil
+	setPrivateKey(&keypair, orderMinusOne.Bytes())
+	_, err1 = keypair.SchnorrPublicKey()
+	_, err2 = keypair.SchnorrSign(&msg)
+	_, err3 = DeserializePrivateKey(keypair.SerializePrivateKey())
+	*goodKeyPair = goodKeyPairBackup
+	*goodPublicKey = goodPublicKeyBackup
+	err4 = goodKeyPair.Add(intTo32Bytes(orderMinusOne))
+	err5 = goodPublicKey.Add(intTo32Bytes(orderMinusOne))
 	if err1 != nil || err2 != nil || err3 != nil || err4 != nil || err5 != nil {
 		t.Errorf("Group order - 1 should be a valid key, err1: '%s', err2: '%s', err3: '%s', err4: '%s', err5: '%s'", err1, err2, err3, err4, err5)
 	}
@@ -290,27 +240,21 @@ func TestBadPrivateKeyPublicKeyFail(t *testing.T) {
 func TestParseSchnorrPubKey(t *testing.T) {
 	r := rand.New(rand.NewSource(1))
 	for i := 0; i < loopsN; i++ {
-		privkey := fastGeneratePrivateKey(t, r)
-		pubkey, err := privkey.SchnorrPublicKey()
+		keypair := fastGenerateKeyPair(t, r)
+		pubkey, err := keypair.SchnorrPublicKey()
 		if err != nil {
-			t.Errorf("Failed Generating a pubkey from privateKey: '%s'. '%s'", privkey, err)
+			t.Errorf("Failed Generating a pubkey from privateKey: '%s'. '%s'", keypair, err)
 		}
-		serializedCompressed, err1 := pubkey.SerializeCompressed()
-		serializedUncompressed, err2 := pubkey.SerializeUncompressed()
-		if err1 != nil || err2 != nil {
-			t.Errorf("Failed serializing the key: %s, errors: %s, '%s'", pubkey, err1, err2)
-		}
-		pubkeyNew1, err := DeserializeSchnorrPubKey(serializedCompressed[:])
+		serializedPubkey, err := pubkey.Serialize()
 		if err != nil {
-			t.Errorf("Failed Parsing the compressed public key from privkey: '%s'. '%s'", pubkeyNew1, err)
+			t.Errorf("Failed serializing the key: %s, error: '%s'", pubkey, err)
 		}
-		pubkeyNew2, err := DeserializeSchnorrPubKey(serializedUncompressed[:])
+		pubkeyNew1, err := DeserializeSchnorrPubKey(serializedPubkey[:])
 		if err != nil {
-			t.Errorf("Failed Parsing the uncompressed public key from privkey: '%s'. '%s'", pubkeyNew2, err)
+			t.Errorf("Failed Parsing the compressed public key from keypair: '%s'. '%s'", pubkeyNew1, err)
 		}
-
-		if !pubkey.IsEqual(pubkeyNew1) || !pubkey.IsEqual(pubkeyNew2) {
-			t.Errorf("Pubkeys aren't the same: '%s', '%s', '%s'", pubkey, pubkeyNew1, pubkeyNew2)
+		if !pubkey.IsEqual(pubkeyNew1) {
+			t.Errorf("Pubkeys aren't the same: '%s', '%s',", pubkey, pubkeyNew1)
 		}
 	}
 }
@@ -318,27 +262,27 @@ func TestParseSchnorrPubKey(t *testing.T) {
 func TestSignVerifyParseSchnorr(t *testing.T) {
 	r := rand.New(rand.NewSource(1))
 	for i := 0; i < loopsN; i++ {
-		privkey := fastGeneratePrivateKey(t, r)
+		keypair := fastGenerateKeyPair(t, r)
 
-		pubkey, err := privkey.SchnorrPublicKey()
+		pubkey, err := keypair.SchnorrPublicKey()
 		if err != nil {
-			t.Errorf("Failed generating a pubkey, privateKey: '%s', error: %s", privkey, err)
+			t.Errorf("Failed generating a pubkey, privateKey: '%s', error: %s", keypair, err)
 		}
 		msg := Hash{}
 		n, err := r.Read(msg[:])
 		if err != nil || n != 32 {
 			t.Errorf("Failed generating a msg. read: '%d' bytes. .'%s'", n, err)
 		}
-		sig1, err := privkey.SchnorrSign(&msg)
+		sig1, err := keypair.SchnorrSign(&msg)
 		if err != nil {
-			t.Errorf("Failed signing schnorr: key: '%s', msg: '%s', error: '%s'", privkey, msg, err)
+			t.Errorf("Failed signing schnorr: key: '%s', msg: '%s', error: '%s'", keypair, msg, err)
 		}
-		sig2, err := privkey.SchnorrSign(&msg)
+		sig2, err := keypair.SchnorrSign(&msg)
 		if err != nil {
-			t.Errorf("Failed signing schnorr: key: '%s', msg: '%s', error: '%s'", privkey, msg, err)
+			t.Errorf("Failed signing schnorr: key: '%s', msg: '%s', error: '%s'", keypair, msg, err)
 		}
-		if *sig1 != *sig2 {
-			t.Errorf("Signing isn't deterministic '%s' '%s'", sig1, sig2)
+		if *sig1 == *sig2 {
+			t.Errorf("Signing uses auxilary randomness, the odds of 2 signatures being the same is 1/2^128 '%s' '%s'", sig1, sig2)
 		}
 		serialized := sig1.Serialize()
 		sigDeserialized := DeserializeSchnorrSignature(serialized)
@@ -346,7 +290,10 @@ func TestSignVerifyParseSchnorr(t *testing.T) {
 			t.Errorf("Failed Deserializing schnorr signature '%s'", serialized)
 		}
 		if !pubkey.SchnorrVerify(&msg, sig1) {
-			t.Errorf("Failed verifying schnorr signature privateKey: '%s' pubkey: '%s' signature: '%s'", privkey, pubkey, sig1)
+			t.Errorf("Failed verifying schnorr signature privateKey: '%s' pubkey: '%s' signature: '%s'", keypair, pubkey, sig1)
+		}
+		if !pubkey.SchnorrVerify(&msg, sig2) {
+			t.Errorf("Failed verifying schnorr signature privateKey: '%s' pubkey: '%s' signature: '%s'", keypair, pubkey, sig2)
 		}
 	}
 }
@@ -365,157 +312,188 @@ func decodeHex(hexStr string) []byte {
 }
 
 func TestSchnorrSignatureVerify(t *testing.T) {
-	// Test vectors taken from https://github.com/sipa/bips/blob/bip-schnorr/bip-schnorr/test-vectors.csv
+	// Test vectors taken from https://github.com/bitcoin/bips/blob/master/bip-0340/test-vectors.csv
 	tests := []struct {
+		secKey    []byte
 		pubKey    []byte
+		auxRand   []byte
 		message   []byte
 		signature []byte
 		valid     bool
 	}{
 		{
-			decodeHex("0279BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798"),
+			decodeHex("0000000000000000000000000000000000000000000000000000000000000003"),
+			decodeHex("F9308A019258C31049344F85F89D5229B531C845836F99B08601F113BCE036F9"),
 			decodeHex("0000000000000000000000000000000000000000000000000000000000000000"),
-			decodeHex("787A848E71043D280C50470E8E1532B2DD5D20EE912A45DBDD2BD1DFBF187EF67031A98831859DC34DFFEEDDA86831842CCD0079E1F92AF177F7F22CC1DCED05"),
+			decodeHex("0000000000000000000000000000000000000000000000000000000000000000"),
+			decodeHex("E907831F80848D1069A5371B402410364BDF1C5F8307B0084C55F1CE2DCA821525F66A4A85EA8B71E482A74F382D2CE5EBEEE8FDB2172F477DF4900D310536C0"),
 			true,
 		},
 		{
-			decodeHex("02DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659"),
+			decodeHex("B7E151628AED2A6ABF7158809CF4F3C762E7160F38B4DA56A784D9045190CFEF"),
+			decodeHex("DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659"),
+			decodeHex("0000000000000000000000000000000000000000000000000000000000000001"),
 			decodeHex("243F6A8885A308D313198A2E03707344A4093822299F31D0082EFA98EC4E6C89"),
-			decodeHex("2A298DACAE57395A15D0795DDBFD1DCB564DA82B0F269BC70A74F8220429BA1D1E51A22CCEC35599B8F266912281F8365FFC2D035A230434A1A64DC59F7013FD"),
+			decodeHex("6896BD60EEAE296DB48A229FF71DFE071BDE413E6D43F917DC8DCF8C78DE33418906D11AC976ABCCB20B091292BFF4EA897EFCB639EA871CFA95F6DE339E4B0A"),
 			true,
 		},
 		{
-			decodeHex("03FAC2114C2FBB091527EB7C64ECB11F8021CB45E8E7809D3C0938E4B8C0E5F84B"),
-			decodeHex("5E2D58D8B3BCDF1ABADEC7829054F90DDA9805AAB56C77333024B9D0A508B75C"),
-			decodeHex("00DA9B08172A9B6F0466A2DEFD817F2D7AB437E0D253CB5395A963866B3574BE00880371D01766935B92D2AB4CD5C8A2A5837EC57FED7660773A05F0DE142380"),
+			decodeHex("C90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B14E5C9"),
+			decodeHex("DD308AFEC5777E13121FA72B9CC1B7CC0139715309B086C960E18FD969774EB8"),
+			decodeHex("C87AA53824B4D7AE2EB035A2B5BBBCCC080E76CDC6D1692C4B0B62D798E6D906"),
+			decodeHex("7E2D58D8B3BCDF1ABADEC7829054F90DDA9805AAB56C77333024B9D0A508B75C"),
+			decodeHex("5831AAEED7B44BB74E5EAB94BA9D4294C49BCF2A60728D8B4C200F50DD313C1BAB745879A5AD954A72C45A91C3A51D3C7ADEA98D82F8481E0E1E03674A6F3FB7"),
 			true,
 		},
-		{
-			decodeHex("03DEFDEA4CDB677750A420FEE807EACF21EB9898AE79B9768766E4FAA04A2D4A34"),
-			decodeHex("4DF3C3F68FCC83B27E9D42C90431A72499F17875C81A599B566C9889B9696703"),
-			decodeHex("00000000000000000000003B78CE563F89A0ED9414F5AA28AD0D96D6795F9C6302A8DC32E64E86A333F20EF56EAC9BA30B7246D6D25E22ADB8C6BE1AEB08D49D"),
-			true,
-		},
-		{
-			decodeHex("031B84C5567B126440995D3ED5AABA0565D71E1834604819FF9C17F5E9D5DD078F"),
-			decodeHex("0000000000000000000000000000000000000000000000000000000000000000"),
-			decodeHex("52818579ACA59767E3291D91B76B637BEF062083284992F2D95F564CA6CB4E3530B1DA849C8E8304ADC0CFE870660334B3CFC18E825EF1DB34CFAE3DFC5D8187"),
-			true,
-		},
-		{
-			decodeHex("03FAC2114C2FBB091527EB7C64ECB11F8021CB45E8E7809D3C0938E4B8C0E5F84B"),
+		{ // test fails if msg is reduced modulo p or n
+			decodeHex("0B432B2677937381AEF05BB02A66ECD012773062CF3FA2549E44F58ED2401710"),
+			decodeHex("25D1DFF95105F5253C4022F628A996AD3A0D95FBF21D468A1B33F8C160D8F517"),
 			decodeHex("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"),
-			decodeHex("570DD4CA83D4E6317B8EE6BAE83467A1BF419D0767122DE409394414B05080DCE9EE5F237CBD108EABAE1E37759AE47F8E4203DA3532EB28DB860F33D62D49BD"),
+			decodeHex("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"),
+			decodeHex("7EB0509757E246F19449885651611CB965ECC1A187DD51B64FDA1EDC9637D5EC97582B9CB13DB3933705B32BA982AF5AF25FD78881EBB32771FC5922EFC66EA3"),
 			true,
 		},
 		{
-			decodeHex("02DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659"),
+			nil,
+			decodeHex("D69C3509BB99E412E68B0FE8544E72837DFA30746D8BE2AA65975F29D22DC7B9"),
+			nil,
+			decodeHex("4DF3C3F68FCC83B27E9D42C90431A72499F17875C81A599B566C9889B9696703"),
+			decodeHex("00000000000000000000003B78CE563F89A0ED9414F5AA28AD0D96D6795F9C6376AFB1548AF603B3EB45C9F8207DEE1060CB71C04E80F593060B07D28308D7F4"),
+			true,
+		},
+		{ //public key not on the curve
+			nil,
+			decodeHex("EEFDEA4CDB677750A420FEE807EACF21EB9898AE79B9768766E4FAA04A2D4A34"),
+			nil,
 			decodeHex("243F6A8885A308D313198A2E03707344A4093822299F31D0082EFA98EC4E6C89"),
-			decodeHex("2A298DACAE57395A15D0795DDBFD1DCB564DA82B0F269BC70A74F8220429BA1DFA16AEE06609280A19B67A24E1977E4697712B5FD2943914ECD5F730901B4AB7"),
+			decodeHex("6CFF5C3BA86C69EA4B7376F31A9BCB4F74C1976089B2D9963DA2E5543E17776969E89B4C5564D00349106B8497785DD7D1D713A8AE82B32FA79D5F7FC407D39B"),
 			false,
 		},
-		{
-			decodeHex("03FAC2114C2FBB091527EB7C64ECB11F8021CB45E8E7809D3C0938E4B8C0E5F84B"),
-			decodeHex("5E2D58D8B3BCDF1ABADEC7829054F90DDA9805AAB56C77333024B9D0A508B75C"),
-			decodeHex("00DA9B08172A9B6F0466A2DEFD817F2D7AB437E0D253CB5395A963866B3574BED092F9D860F1776A1F7412AD8A1EB50DACCC222BC8C0E26B2056DF2F273EFDEC"),
-			false,
-		},
-		{
-			decodeHex("0279BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798"),
-			decodeHex("0000000000000000000000000000000000000000000000000000000000000000"),
-			decodeHex("787A848E71043D280C50470E8E1532B2DD5D20EE912A45DBDD2BD1DFBF187EF68FCE5677CE7A623CB20011225797CE7A8DE1DC6CCD4F754A47DA6C600E59543C"),
-			false,
-		},
-		{
-			decodeHex("03DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659"),
+		{ // has_even_y(R) is false
+			nil,
+			decodeHex("DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659"),
+			nil,
 			decodeHex("243F6A8885A308D313198A2E03707344A4093822299F31D0082EFA98EC4E6C89"),
-			decodeHex("2A298DACAE57395A15D0795DDBFD1DCB564DA82B0F269BC70A74F8220429BA1D1E51A22CCEC35599B8F266912281F8365FFC2D035A230434A1A64DC59F7013FD"),
+			decodeHex("FFF97BD5755EEEA420453A14355235D382F6472F8568A18B2F057A14602975563CC27944640AC607CD107AE10923D9EF7A73C643E166BE5EBEAFA34B1AC553E2"),
 			false,
 		},
-		{
-			decodeHex("03DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659"),
+		{ // negated message
+			nil,
+			decodeHex("DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659"),
+			nil,
 			decodeHex("243F6A8885A308D313198A2E03707344A4093822299F31D0082EFA98EC4E6C89"),
-			decodeHex("00000000000000000000000000000000000000000000000000000000000000009E9D01AF988B5CEDCE47221BFA9B222721F3FA408915444A4B489021DB55775F"),
+			decodeHex("1FA62E331EDBC21C394792D2AB1100A7B432B013DF3F6FF4F99FCB33E0E1515F28890B3EDB6E7189B630448B515CE4F8622A954CFE545735AAEA5134FCCDB2BD"),
 			false,
 		},
-		{
-			decodeHex("03DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659"),
+		{ // negated s value
+			nil,
+			decodeHex("DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659"),
+			nil,
 			decodeHex("243F6A8885A308D313198A2E03707344A4093822299F31D0082EFA98EC4E6C89"),
-			decodeHex("0000000000000000000000000000000000000000000000000000000000000001D37DDF0254351836D84B1BD6A795FD5D523048F298C4214D187FE4892947F728"),
+			decodeHex("6CFF5C3BA86C69EA4B7376F31A9BCB4F74C1976089B2D9963DA2E5543E177769961764B3AA9B2FFCB6EF947B6887A226E8D7C93E00C5ED0C1834FF0D0C2E6DA6"),
 			false,
 		},
-		{
-			decodeHex("03DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659"),
+		{ // sG - eP is infinite. Test fails in single verification if has_even_y(inf) is defined as true and x(inf) as 0
+			nil,
+			decodeHex("DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659"),
+			nil,
 			decodeHex("243F6A8885A308D313198A2E03707344A4093822299F31D0082EFA98EC4E6C89"),
-			decodeHex("4A298DACAE57395A15D0795DDBFD1DCB564DA82B0F269BC70A74F8220429BA1D1E51A22CCEC35599B8F266912281F8365FFC2D035A230434A1A64DC59F7013FD"),
+			decodeHex("0000000000000000000000000000000000000000000000000000000000000000123DDA8328AF9C23A94C1FEECFD123BA4FB73476F0D594DCB65C6425BD186051"),
 			false,
 		},
-		{
-			decodeHex("03DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659"),
+		{ // sG - eP is infinite. Test fails in single verification if has_even_y(inf) is defined as true and x(inf) as 1
+			nil,
+			decodeHex("DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659"),
+			nil,
 			decodeHex("243F6A8885A308D313198A2E03707344A4093822299F31D0082EFA98EC4E6C89"),
-			decodeHex("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFC2F1E51A22CCEC35599B8F266912281F8365FFC2D035A230434A1A64DC59F7013FD"),
+			decodeHex("00000000000000000000000000000000000000000000000000000000000000017615FBAF5AE28864013C099742DEADB4DBA87F11AC6754F93780D5A1837CF197"),
 			false,
 		},
-		{
-			decodeHex("03DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659"),
+		{ // sig[0:32] is not an X coordinate on the curve
+			nil,
+			decodeHex("DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659"),
+			nil,
 			decodeHex("243F6A8885A308D313198A2E03707344A4093822299F31D0082EFA98EC4E6C89"),
-			decodeHex("2A298DACAE57395A15D0795DDBFD1DCB564DA82B0F269BC70A74F8220429BA1DFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141"),
+			decodeHex("4A298DACAE57395A15D0795DDBFD1DCB564DA82B0F269BC70A74F8220429BA1D69E89B4C5564D00349106B8497785DD7D1D713A8AE82B32FA79D5F7FC407D39B"),
+			false,
+		},
+		{ // sig[0:32] is equal to field size
+			nil,
+			decodeHex("DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659"),
+			nil,
+			decodeHex("243F6A8885A308D313198A2E03707344A4093822299F31D0082EFA98EC4E6C89"),
+			decodeHex("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F69E89B4C5564D00349106B8497785DD7D1D713A8AE82B32FA79D5F7FC407D39B"),
+			false,
+		},
+		{ // sig[32:64] is equal to curve order
+			nil,
+			decodeHex("DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659"),
+			nil,
+			decodeHex("243F6A8885A308D313198A2E03707344A4093822299F31D0082EFA98EC4E6C89"),
+			decodeHex("6CFF5C3BA86C69EA4B7376F31A9BCB4F74C1976089B2D9963DA2E5543E177769FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141"),
+			false,
+		},
+		{ // public key is not a valid X coordinate because it exceeds the field size
+			nil,
+			decodeHex("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC30"),
+			nil,
+			decodeHex("243F6A8885A308D313198A2E03707344A4093822299F31D0082EFA98EC4E6C89"),
+			decodeHex("6CFF5C3BA86C69EA4B7376F31A9BCB4F74C1976089B2D9963DA2E5543E17776969E89B4C5564D00349106B8497785DD7D1D713A8AE82B32FA79D5F7FC407D39B"),
 			false,
 		},
 	}
 
 	msg32 := Hash{}
 	for i, test := range tests {
-		pubkey, err := DeserializeSchnorrPubKey(test.pubKey)
-		if err != nil {
-			t.Fatal(err)
-		}
 		sig, err := DeserializeSchnorrSignatureFromSlice(test.signature)
 		if err != nil {
 			t.Fatal(err)
 		}
-
 		err = msg32.SetBytes(test.message)
 		if err != nil {
 			t.Fatal(err)
 		}
-		valid := pubkey.SchnorrVerify(&msg32, sig)
-		if valid != test.valid {
-			t.Errorf("Schnorr test vector '%d' expected verification: '%t', got: '%t'", i, valid, test.valid)
+		pubkey, err := DeserializeSchnorrPubKey(test.pubKey)
+		if err != nil && test.valid {
+			t.Fatalf("Schnorr test vector '%d': %s, pubkey: %x", i, err, test.pubKey)
 		}
-	}
-}
+		if err == nil {
+			valid := pubkey.SchnorrVerify(&msg32, sig)
+			if valid != test.valid {
+				t.Errorf("Schnorr test vector '%d' expected verification: '%t', got: '%t'", i, valid, test.valid)
+			}
+		}
+		if test.secKey != nil {
+			var auxRandPtr *[32]byte
+			keypair, err := DeserializePrivateKeyFromSlice(test.secKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.auxRand != nil {
+				auxRandPtr = &[32]byte{}
+				if len(auxRandPtr) != len(test.auxRand) {
+					t.Fatalf("Schnorr test vector '%d': invalid auxilary randomness length: %d != %d", i, len(auxRandPtr), len(test.auxRand))
+				}
+				copy(auxRandPtr[:], test.auxRand)
+			}
 
-func TestDeterministicSchnorrSignatureGen(t *testing.T) {
-	// Test vector from Bitcoin-ABC
-
-	privKey, err := DeserializePrivateKeyFromSlice(decodeHex("12b004fff7f4b69ef8650e767f18f11ede158148b425660723b9f9a66e61f747"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	msg := Hash{}
-	err = msg.SetBytes(decodeHex("5255683da567900bfd3e786ed8836a4e7763c221bf1ac20ece2a5171b9199e8a"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	sig, err := privKey.SchnorrSign(&msg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	serializedSig := sig.Serialize()
-	if !bytes.Equal(serializedSig[:32], decodeHex("2c56731ac2f7a7e7f11518fc7722a166b02438924ca9d8b4d111347b81d07175")) ||
-		!bytes.Equal(serializedSig[32:], decodeHex("71846de67ad3d913a8fdf9d8f3f73161a4c48ae81cb183b214765feb86e255ce")) {
-		t.Error("Failed to generate deterministic schnorr signature")
+			newSig, err := keypair.schnorrSignInternal(&msg32, auxRandPtr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !newSig.IsEqual(sig) {
+				t.Errorf("Schnorr test vector '%d' expected sig: %s. got: %s", i, sig, newSig)
+			}
+		}
 	}
 }
 
 func TestSchnorrPublicKey_IsEqual(t *testing.T) {
 	r := rand.New(rand.NewSource(1))
-	goodPrivateKey := fastGeneratePrivateKey(t, r)
-	goodPublicKey, err := goodPrivateKey.SchnorrPublicKey()
+	goodKeyPair := fastGenerateKeyPair(t, r)
+	goodPublicKey, err := goodKeyPair.SchnorrPublicKey()
 	if err != nil {
-		t.Fatalf("Failed generating pubkey from: '%s'. '%s'", goodPrivateKey, err)
+		t.Fatalf("Failed generating pubkey from: '%s'. '%s'", goodKeyPair, err)
 	}
 	badPublicKey := SchnorrPublicKey{}
 	if badPublicKey.IsEqual(goodPublicKey) {
@@ -537,10 +515,10 @@ func TestSchnorrPublicKey_IsEqual(t *testing.T) {
 	if !copyGoodPubkey.IsEqual(goodPublicKey) {
 		t.Errorf("A pubkey and its copy should be the same")
 	}
-	goodPrivateKey2 := fastGeneratePrivateKey(t, r)
-	goodPublicKey2, err := goodPrivateKey2.SchnorrPublicKey()
+	goodKeyPair2 := fastGenerateKeyPair(t, r)
+	goodPublicKey2, err := goodKeyPair2.SchnorrPublicKey()
 	if err != nil {
-		t.Fatalf("Failed generating pubkey from: '%s'. '%s'", goodPrivateKey2, err)
+		t.Fatalf("Failed generating pubkey from: '%s'. '%s'", goodKeyPair2, err)
 	}
 
 	if goodPublicKey.IsEqual(goodPublicKey2) {
