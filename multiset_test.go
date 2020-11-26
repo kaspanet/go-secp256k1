@@ -90,19 +90,28 @@ func TestVectorsMultiset_Hash(t *testing.T) {
 
 func TestVectorsMultiset_AddRemove(t *testing.T) {
 	m := NewMultiset()
+	m2 := NewMultiset()
+	datas := make([][]byte, len(testVectors))
 	for i, test := range testVectors {
+		datas[i] = test.dataElement
 		m.Add(test.dataElement)
 		mFinal := m.Finalize()
 		if !mFinal.IsEqual(&test.cumulativeHash) {
 			t.Fatalf("Test #%d: Multiset-Add returned incorrect hash. Expected '%s' but got '%s'", i, test.cumulativeHash, mFinal)
 		}
 	}
+	m2.AddMulti(datas)
 
 	for i := len(testVectors) - 1; i > 0; i-- {
 		m.Remove(testVectors[i].dataElement)
+		m2.Remove(testVectors[i].dataElement)
 		mFinal := m.Finalize()
+		m2Final := m2.Finalize()
 		if !mFinal.IsEqual(&testVectors[i-1].cumulativeHash) {
 			t.Fatalf("Test #%d: Multiset-Remove returned incorrect hash. Expected '%s' but got '%s'", i, testVectors[i].cumulativeHash, mFinal)
+		}
+		if !m2Final.IsEqual(&testVectors[i-1].cumulativeHash) {
+			t.Fatalf("Test #%d: Multiset-Remove returned incorrect hash. Expected '%s' but got '%s'", i, &testVectors[i].cumulativeHash, m2Final)
 		}
 	}
 }
