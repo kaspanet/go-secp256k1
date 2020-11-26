@@ -1,6 +1,14 @@
 package secp256k1
 
+import "C"
+
 // #include "./depend/secp256k1/include/secp256k1_multiset.h"
+// void secp256k1_multiset_add_multi(const secp256k1_context* ctx, secp256k1_multiset *multiset, const unsigned char **inputs, const size_t *inputsLen, size_t inputsAmount) {
+//
+//	for (size_t i = 0; i < inputsAmount; ++i) {
+//		secp256k1_multiset_add(ctx, multiset, inputs[i], inputsLen[i]);
+// }
+//}
 import "C"
 import (
 	"encoding/hex"
@@ -60,6 +68,21 @@ func (multiset *MultiSet) Add(data []byte) {
 	if ret != 1 {
 		panic("failed adding to the multiset. Should never happen")
 	}
+}
+
+// AddMulti hashes the data onto the curve and adds it to the multiset.
+// Supports arbitrary length data (subject to the underlying hash function(SHA256) limits)
+func (multiset *MultiSet) AddMulti(data [][]byte) {
+	lens := make([]C.size_t, len(data))
+	ptrs := make([]*C.uchar, len(data))
+	for i, _ := range data {
+		lens[i] = (C.size_t)(len(data[i]))
+		ptrs[i] = (*C.uchar)(&data[i][0])
+	}
+	cPtrData := (**C.uchar)(&ptrs[0])
+	CLenPtr := (*C.size_t)(&lens[0])
+	CLenData := (C.size_t)(len(data))
+	C.secp256k1_multiset_add_multi(context, &multiset.set, cPtrData, CLenPtr, CLenData)
 }
 
 // Remove hashes the data onto the curve and removes it from the multiset.
