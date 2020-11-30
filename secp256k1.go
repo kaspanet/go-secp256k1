@@ -3,17 +3,11 @@ package secp256k1
 // // **This is CGO's build system. CGO parses the following comments as build instructions.**
 // // Including the headers and code, and defining the default macros
 // #cgo CFLAGS: -I./depend/secp256k1 -I./depend/secp256k1/src/
-// #cgo CFLAGS: -DSECP256K1_BUILD=1 -DECMULT_WINDOW_SIZE=15 -DUSE_ENDOMORPHISM=1 -DENABLE_MODULE_OLDSCHNORR=1 -DENABLE_MODULE_MULTISET=1
+// #cgo CFLAGS: -DSECP256K1_BUILD=1 -DECMULT_WINDOW_SIZE=15 -DENABLE_MODULE_SCHNORRSIG=1 -DENABLE_MODULE_EXTRAKEYS=1 -DENABLE_MODULE_MULTISET=1
 // // Consider using libgmp. these macros are set to use the slower in-project implementation of nums
 // #cgo CFLAGS: -DUSE_NUM_NONE=1 -DUSE_FIELD_INV_BUILTIN=1 -DUSE_SCALAR_INV_BUILTIN=1 -DECMULT_GEN_PREC_BITS=4
 // // x86_64 can use the Assembly implementation.
 // #cgo amd64 CFLAGS: -DUSE_ASM_X86_64=1
-// // check if 32 bit
-// #cgo 386 amd64p32 arm armbe mips mipsle mips64p32 mips64p32le ppc s390 sparc CFLAGS: -DUSE_FIELD_10X26=1 -DUSE_SCALAR_8X32=1
-// // check if 64 bit
-// #cgo amd64 arm64 arm64be ppc64 ppc64le mips64 mips64le s390x sparc64 CFLAGS: -DUSE_FIELD_5X52=1 -DUSE_SCALAR_4X64=1 -DHAVE___INT128=1
-// // check if Big Endian
-// #cgo arm64be armbe mips mips64 mips64p32 ppc s390 s390x sparc sparc64 CFLAGS: -DWORDS_BIGENDIAN=1
 // #include "./depend/secp256k1/include/secp256k1.h"
 // #include "./depend/secp256k1/src/secp256k1.c"
 import "C"
@@ -81,92 +75,4 @@ func (hash *Hash) SetBytes(newHash []byte) error {
 // String returns the Hash as the hexadecimal string
 func (hash *Hash) String() string {
 	return hex.EncodeToString(hash[:])
-}
-
-// PrivateKey is a type representing a Secp256k1 private key.
-// This private key can be used to create Schnorr/ECDSA signatures
-type PrivateKey struct {
-	privateKey [SerializedPrivateKeySize]byte
-}
-
-// SerializedPrivateKey is a byte array representing the storage representation of a PrivateKey
-type SerializedPrivateKey [SerializedPrivateKeySize]byte
-
-// String returns the PrivateKey as the hexadecimal string
-func (key *SerializedPrivateKey) String() string {
-	return hex.EncodeToString(key[:])
-}
-
-// String returns the PrivateKey as the hexadecimal string
-func (key *PrivateKey) String() string {
-	return key.Serialize().String()
-}
-
-// DeserializePrivateKey returns a PrivateKey type from a 32 byte private key.
-// will verify it's a valid private key(Group Order > key > 0)
-func DeserializePrivateKey(data *SerializedPrivateKey) (key *PrivateKey, err error) {
-	cPtr := (*C.uchar)(&data[0])
-
-	ret := C.secp256k1_ec_seckey_verify(C.secp256k1_context_no_precomp, cPtr)
-	if ret != 1 {
-		return nil, errors.New("invalid PrivateKey (zero or bigger than the group order)")
-	}
-
-	return &PrivateKey{*data}, nil
-}
-
-// DeserializePrivateKeyFromSlice returns a PrivateKey type from a serialized private key slice.
-// will verify that it's 32 byte and it's a valid private key(Group Order > key > 0)
-func DeserializePrivateKeyFromSlice(data []byte) (key *PrivateKey, err error) {
-	if len(data) != SerializedPrivateKeySize {
-		return nil, errors.Errorf("invalid private key length got %d, expected %d", len(data),
-			SerializedPrivateKeySize)
-	}
-
-	serializedKey := &SerializedPrivateKey{}
-	copy(serializedKey[:], data)
-	return DeserializePrivateKey(serializedKey)
-}
-
-// GeneratePrivateKey generates a random valid private key from `crypto/rand`
-func GeneratePrivateKey() (key *PrivateKey, err error) {
-	key = &PrivateKey{}
-	cPtr := (*C.uchar)(&key.privateKey[0])
-	for {
-		n, tmpErr := rand.Read(key.privateKey[:])
-		if tmpErr != nil || n != len(key.privateKey) {
-			return nil, tmpErr
-		}
-		ret := C.secp256k1_ec_seckey_verify(C.secp256k1_context_no_precomp, cPtr)
-		if ret == 1 {
-			return
-		}
-	}
-}
-
-// Serialize a private key
-func (key *PrivateKey) Serialize() *SerializedPrivateKey {
-	ret := SerializedPrivateKey(key.privateKey)
-	return &ret
-}
-
-// Negate a private key in place.
-func (key *PrivateKey) Negate() {
-	cPtr := (*C.uchar)(&key.privateKey[0])
-	ret := C.secp256k1_ec_privkey_negate(C.secp256k1_context_no_precomp, cPtr)
-	if ret != 1 {
-		panic("Failed Negating the private key. Should never happen")
-	}
-}
-
-// Add a tweak to the public key by doing `key + tweak % Group Order`. this adds it in place.
-// This is meant for creating BIP-32(HD) wallets
-func (key *PrivateKey) Add(tweak [32]byte) error {
-	cPtrKey := (*C.uchar)(&key.privateKey[0])
-	cPtrTweak := (*C.uchar)(&tweak[0])
-	ret := C.secp256k1_ec_privkey_tweak_add(C.secp256k1_context_no_precomp, cPtrKey, cPtrTweak)
-	if ret != 1 {
-		return errors.New("failed Adding to private key. Tweak is bigger than the order or the complement of the private key")
-	}
-	return nil
 }
