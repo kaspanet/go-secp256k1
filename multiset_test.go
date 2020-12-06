@@ -3,10 +3,11 @@ package secp256k1
 import (
 	"encoding/hex"
 	"fmt"
-	"github.com/pkg/errors"
 	"math/rand"
 	"os"
 	"testing"
+
+	"github.com/pkg/errors"
 )
 
 type testVector struct {
@@ -263,11 +264,6 @@ func BenchmarkMultiSet_Add(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		set.Add(list[i][:])
-		tmpSer := set.Serialize()
-		tmpSet, err := DeserializeMultiSet(tmpSer)
-		if err != nil || !tmpSet.Finalize().IsEqual(set.Finalize()) {
-			panic("bad benchmark")
-		}
 	}
 }
 
