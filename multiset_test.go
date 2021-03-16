@@ -251,56 +251,55 @@ func TestMultiSetAddRemove(t *testing.T) {
 }
 
 func BenchmarkMultiSet_Add(b *testing.B) {
-	b.ReportAllocs()
-	r := rand.New(rand.NewSource(1))
-	list := make([][100]byte, b.N)
-	for i := 0; i < b.N; i++ {
-		n, err := r.Read(list[i][:])
-		if err != nil || n != len(list[i]) {
-			b.Fatalf("Failed generating random data. read: '%d' bytes. .'%s'", n, err)
-		}
-	}
 	set := NewMultiset()
+	var data [100]byte
+	for i := range data {
+		data[i] = 0xFF
+	}
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		set.Add(list[i][:])
+		set.Add(data[:])
 	}
 }
 
 func BenchmarkMultiSet_Remove(b *testing.B) {
-	b.ReportAllocs()
-	r := rand.New(rand.NewSource(1))
-	list := make([][100]byte, b.N)
-	for i := 0; i < b.N; i++ {
-		n, err := r.Read(list[i][:])
-		if err != nil || n != len(list[i]) {
-			b.Fatalf("Failed generating random data. read: '%d' bytes. .'%s'", n, err)
-		}
-	}
 	set := NewMultiset()
+	var data [100]byte
+	for i := range data {
+		data[i] = 0xFF
+	}
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		set.Remove(list[i][:])
+		set.Remove(data[:])
 	}
 }
 
-func BenchmarkMultiSet_Combine(b *testing.B) {
-	b.ReportAllocs()
-	r := rand.New(rand.NewSource(1))
+func BenchmarkMultiSet_CombineRand(b *testing.B) {
+	r := rand.New(rand.NewSource(0))
 	set := NewMultiset()
-	sets := make([]MultiSet, b.N)
-	for i := 0; i < b.N; i++ {
-		data := [100]byte{}
-		n, err := r.Read(data[:])
-		if err != nil || n != len(data) {
-			b.Fatalf("Failed generating random data. read: '%d' bytes. .'%s'", n, err)
-		}
-		set.Add(data[:])
-		sets[i] = *set
-	}
-	set.Reset()
+	set2 := NewMultiset()
+	var element [32]byte
+	r.Read(element[:])
+	set2.Add(element[:])
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		set.Combine(&sets[i])
+		set.Combine(set2)
+	}
+}
+
+func BenchmarkMultiSet_Finalize(b *testing.B) {
+	r := rand.New(rand.NewSource(0))
+	set := NewMultiset()
+	var element [32]byte
+	r.Read(element[:])
+	set.Add(element[:])
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		clonedSet := *set
+		clonedSet.Finalize()
 	}
 }
