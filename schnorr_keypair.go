@@ -77,12 +77,13 @@ func GeneratePrivateKey() (key *SchnorrKeyPair, err error) {
 
 // SerializePrivateKey returns the private key in the keypair.
 func (key *SchnorrKeyPair) SerializePrivateKey() *SerializedPrivateKey {
-	// TODO: Replace with upstream function when merged: https://github.com/bitcoin-core/secp256k1/pull/845
-	ret := SerializedPrivateKey{}
-	for i := 0; i < 32; i++ {
-		ret[i] = byte(key.keypair.data[i])
+	serialized := SerializedPrivateKey{}
+	cPtr := (*C.uchar)(&serialized[0])
+	ret := C.secp256k1_keypair_sec(C.secp256k1_context_no_precomp, cPtr, &key.keypair)
+	if ret != 1 {
+		panic("failed serializing the secret key. Should never happen (upstream promise to return 1)")
 	}
-	return &ret
+	return &serialized
 }
 
 // Add a tweak to the public key by doing `key + tweak % Group Order` and adjust the pub/priv keys according to parity. this adds it in place.
