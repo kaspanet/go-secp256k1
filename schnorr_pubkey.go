@@ -12,13 +12,11 @@ import (
 // SerializedSchnorrPublicKeySize defines the length in bytes of a SerializedSchnorrPublicKey
 const SerializedSchnorrPublicKeySize = 32
 
-// errZeroedPubkey is the error returned when using a zeroed pubkey
-var errZeroedPubkey = errors.New("the public key is zeroed, which isn't a valid SchnorrPublicKey")
-
 // SchnorrPublicKey is a PublicKey type used to sign and verify Schnorr signatures.
 // The struct itself is an opaque data type that should only be created via the supplied methods.
 type SchnorrPublicKey struct {
 	pubkey C.secp256k1_xonly_pubkey
+	init   bool
 }
 
 // SerializedSchnorrPublicKey is a is a byte array representing the storage representation of a compressed or uncompressed SchnorrPublicKey
@@ -33,18 +31,18 @@ func (key *SchnorrPublicKey) IsEqual(target *SchnorrPublicKey) bool {
 		return false
 	}
 	serializedKey, err1 := key.Serialize()
-	if err1 != nil && !errors.Is(err1, errZeroedPubkey) {
+	if err1 != nil && !errors.Is(err1, errNonInitializedKey) {
 		panic(errors.Wrap(err1, "Unexpected error when serrializing key"))
 	}
 	serializedTarget, err2 := target.Serialize()
-	if err2 != nil && !errors.Is(err2, errZeroedPubkey) {
+	if err2 != nil && !errors.Is(err2, errNonInitializedKey) {
 		panic(errors.Wrap(err1, "Unexpected error when serrializing key"))
 	}
 
-	if errors.Is(err1, errZeroedPubkey) && errors.Is(err2, errZeroedPubkey) { // They're both zeroed, shouldn't happen if a constructor is used.
+	if errors.Is(err1, errNonInitializedKey) && errors.Is(err2, errNonInitializedKey) { // They're both zeroed, shouldn't happen if a constructor is used.
 		return true
 	}
-	if errors.Is(err1, errZeroedPubkey) || errors.Is(err2, errZeroedPubkey) { // Only one of them is zeroed
+	if errors.Is(err1, errNonInitializedKey) || errors.Is(err2, errNonInitializedKey) { // Only one of them is zeroed
 		return false
 	}
 	return *serializedKey == *serializedTarget
@@ -79,7 +77,7 @@ func DeserializeSchnorrPubKey(serializedPubKey []byte) (*SchnorrPublicKey, error
 	if len(serializedPubKey) != SerializedSchnorrPublicKeySize {
 		return nil, errors.New(fmt.Sprintf("serializedPubKey has to be %d bytes, instead got :%d", SerializedSchnorrPublicKeySize, len(serializedPubKey)))
 	}
-	key := SchnorrPublicKey{}
+	key := SchnorrPublicKey{init: true}
 	cPtr := (*C.uchar)(&serializedPubKey[0])
 	ret := C.secp256k1_xonly_pubkey_parse(C.secp256k1_context_no_precomp, &key.pubkey, cPtr)
 	if ret != 1 {
@@ -90,12 +88,11 @@ func DeserializeSchnorrPubKey(serializedPubKey []byte) (*SchnorrPublicKey, error
 
 // Serialize serializes a schnorr public key
 func (key *SchnorrPublicKey) Serialize() (*SerializedSchnorrPublicKey, error) {
+	if !key.init {
+		return nil, errors.WithStack(errNonInitializedKey)
+	}
 	serialized := SerializedSchnorrPublicKey{}
 	cPtr := (*C.uchar)(&serialized[0])
-	if isZeroed(key.pubkey.data[:]) {
-		return nil, errZeroedPubkey
-	}
-
 	ret := C.secp256k1_xonly_pubkey_serialize(C.secp256k1_context_no_precomp, cPtr, &key.pubkey)
 	if ret != 1 {
 		panic("failed serializing a pubkey. Should never happen (upstream promise to return 1)")
@@ -111,6 +108,9 @@ func (key *SchnorrPublicKey) Add(tweak [32]byte) error {
 }
 
 func (key *SchnorrPublicKey) addInternal(tweak [32]byte) (bool, error) {
+	if !key.init {
+		return false, errors.WithStack(errNonInitializedKey)
+	}
 	cPtrTweak := (*C.uchar)(&tweak[0])
 	fullKey := C.secp256k1_pubkey{}
 	ret := C.secp256k1_xonly_pubkey_tweak_add(context, &fullKey, &key.pubkey, cPtrTweak)
@@ -123,13 +123,4 @@ func (key *SchnorrPublicKey) addInternal(tweak [32]byte) (bool, error) {
 		panic("Should never fail. we just created the public key so it can't be invalid")
 	}
 	return parityBitToBool(cParity), nil
-}
-
-func isZeroed(slice []C.uchar) bool {
-	for _, byte := range slice {
-		if byte != 0 {
-			return false
-		}
-	}
-	return true
 }
