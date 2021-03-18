@@ -38,6 +38,9 @@ func init() {
 	}
 }
 
+// errNonInitializedKey is the error returned when using a zeroed pubkey
+var errNonInitializedKey = errors.New("the key isn't initialized, you should use the generate/deserialize functions")
+
 const (
 	// HashSize of array used to store hashes. See Hash.
 	HashSize = 32

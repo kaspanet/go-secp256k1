@@ -12,13 +12,11 @@ import (
 	"unsafe"
 )
 
-// errZeroedKeyPair is the error returned when using a zeroed pubkey
-var errZeroedKeyPair = errors.New("the key pair is zeroed, which isn't a valid SchnorrKeyPair")
-
 // SchnorrKeyPair is a type representing a pair of Secp256k1 private and public keys.
 // This can be used to create Schnorr signatures
 type SchnorrKeyPair struct {
 	keypair C.secp256k1_keypair
+	init    bool
 }
 
 // SerializedPrivateKey is a byte array representing the storage representation of a SchnorrKeyPair
@@ -34,10 +32,10 @@ func (key SchnorrKeyPair) String() string {
 	return key.SerializePrivateKey().String()
 }
 
-// DeserializePrivateKey returns a SchnorrKeyPair type from a 32 byte private key.
+// DeserializeSchnorrPrivateKey returns a SchnorrKeyPair type from a 32 byte private key.
 // will verify it's a valid private key(Group Order > key > 0)
-func DeserializePrivateKey(data *SerializedPrivateKey) (*SchnorrKeyPair, error) {
-	key := SchnorrKeyPair{}
+func DeserializeSchnorrPrivateKey(data *SerializedPrivateKey) (*SchnorrKeyPair, error) {
+	key := SchnorrKeyPair{init: true}
 	cPtrPrivateKey := (*C.uchar)(&data[0])
 
 	ret := C.secp256k1_keypair_create(context, &key.keypair, cPtrPrivateKey)
@@ -47,9 +45,9 @@ func DeserializePrivateKey(data *SerializedPrivateKey) (*SchnorrKeyPair, error) 
 	return &key, nil
 }
 
-// DeserializePrivateKeyFromSlice returns a SchnorrKeyPair type from a serialized private key slice.
+// DeserializeSchnorrPrivateKeyFromSlice returns a SchnorrKeyPair type from a serialized private key slice.
 // will verify that it's 32 byte and it's a valid private key(Group Order > key > 0)
-func DeserializePrivateKeyFromSlice(data []byte) (key *SchnorrKeyPair, err error) {
+func DeserializeSchnorrPrivateKeyFromSlice(data []byte) (key *SchnorrKeyPair, err error) {
 	if len(data) != SerializedPrivateKeySize {
 		return nil, errors.Errorf("invalid private key length got %d, expected %d", len(data),
 			SerializedPrivateKeySize)
@@ -57,18 +55,21 @@ func DeserializePrivateKeyFromSlice(data []byte) (key *SchnorrKeyPair, err error
 
 	serializedKey := &SerializedPrivateKey{}
 	copy(serializedKey[:], data)
-	return DeserializePrivateKey(serializedKey)
+	return DeserializeSchnorrPrivateKey(serializedKey)
 }
 
-// GeneratePrivateKey generates a random valid private key from `crypto/rand`
-func GeneratePrivateKey() (key *SchnorrKeyPair, err error) {
+// GenerateSchnorrKeyPair generates a random valid private key from `crypto/rand`
+func GenerateSchnorrKeyPair() (key *SchnorrKeyPair, err error) {
 	rawKey := SerializedPrivateKey{}
 	for {
 		n, err := rand.Read(rawKey[:])
-		if err != nil || n != len(rawKey) {
+		if err != nil {
 			return nil, err
 		}
-		key, err = DeserializePrivateKey(&rawKey)
+		if n != len(rawKey) {
+			panic("The standard library promises that this should never happen")
+		}
+		key, err = DeserializeSchnorrPrivateKey(&rawKey)
 		if err == nil {
 			return key, nil
 		}
@@ -89,8 +90,8 @@ func (key *SchnorrKeyPair) SerializePrivateKey() *SerializedPrivateKey {
 // Add a tweak to the public key by doing `key + tweak % Group Order` and adjust the pub/priv keys according to parity. this adds it in place.
 // This is meant for creating BIP-32(HD) wallets
 func (key *SchnorrKeyPair) Add(tweak [32]byte) error {
-	if key.isZeroed() {
-		return errors.WithStack(errZeroedKeyPair)
+	if !key.init {
+		return errors.WithStack(errNonInitializedKey)
 	}
 	cPtrTweak := (*C.uchar)(&tweak[0])
 	ret := C.secp256k1_keypair_xonly_tweak_add(context, &key.keypair, cPtrTweak)
@@ -107,10 +108,10 @@ func (key *SchnorrKeyPair) SchnorrPublicKey() (*SchnorrPublicKey, error) {
 }
 
 func (key *SchnorrKeyPair) schnorrPublicKeyInternal() (pubkey *SchnorrPublicKey, wasOdd bool, err error) {
-	if key.isZeroed() {
-		return nil, false, errors.WithStack(errZeroedKeyPair)
+	if !key.init {
+		return nil, false, errors.WithStack(errNonInitializedKey)
 	}
-	pubkey = &SchnorrPublicKey{}
+	pubkey = &SchnorrPublicKey{init: true}
 	cParity := C.int(42)
 	ret := C.secp256k1_keypair_xonly_pub(context, &pubkey.pubkey, &cParity, &key.keypair)
 	if ret != 1 {
@@ -133,8 +134,8 @@ func (key *SchnorrKeyPair) SchnorrSign(hash *Hash) (*SchnorrSignature, error) {
 }
 
 func (key *SchnorrKeyPair) schnorrSignInternal(hash *Hash, auxiliaryRand *[32]byte) (*SchnorrSignature, error) {
-	if key.isZeroed() {
-		return nil, errors.WithStack(errZeroedKeyPair)
+	if !key.init {
+		return nil, errors.WithStack(errNonInitializedKey)
 	}
 	signature := SchnorrSignature{}
 	cPtrSig := (*C.uchar)(&signature.signature[0])
@@ -142,13 +143,9 @@ func (key *SchnorrKeyPair) schnorrSignInternal(hash *Hash, auxiliaryRand *[32]by
 	cPtrAux := unsafe.Pointer(auxiliaryRand)
 	ret := C.secp256k1_schnorrsig_sign(context, cPtrSig, cPtrHash, &key.keypair, C.secp256k1_nonce_function_bip340, cPtrAux)
 	if ret != 1 {
-		return nil, errors.New("failed Signing. You should call `DeserializePrivateKey` before calling this")
+		return nil, errors.New("failed Signing. You should call `DeserializeSchnorrPrivateKey` before calling this")
 	}
 	return &signature, nil
-
-}
-func (key *SchnorrKeyPair) isZeroed() bool {
-	return isZeroed(key.keypair.data[:32]) || isZeroed(key.keypair.data[32:64]) || isZeroed(key.keypair.data[64:])
 }
 
 func parityBitToBool(parity C.int) bool {
