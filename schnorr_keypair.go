@@ -63,8 +63,11 @@ func GenerateSchnorrKeyPair() (key *SchnorrKeyPair, err error) {
 	rawKey := SerializedPrivateKey{}
 	for {
 		n, err := rand.Read(rawKey[:])
-		if err != nil || n != len(rawKey) {
+		if err != nil {
 			return nil, err
+		}
+		if n != len(rawKey) {
+			panic("The standard library promises that this should never happen")
 		}
 		key, err = DeserializeSchnorrPrivateKey(&rawKey)
 		if err == nil {

@@ -18,7 +18,7 @@ type ECDSAPublicKey struct {
 	init   bool
 }
 
-// SerializedECDSAPublicKey is a is a byte array representing the storage representation of a compressed or uncompressed ECDSAPublicKey
+// SerializedECDSAPublicKey is a is a byte array representing the storage representation of a compressed ECDSAPublicKey
 type SerializedECDSAPublicKey [SerializedECDSAPublicKeySize]byte
 
 // IsEqual returns true if target is the same as key.
@@ -69,8 +69,8 @@ func (key *ECDSAPublicKey) ECDSAVerify(hash *Hash, signature *ECDSASignature) bo
 }
 
 // DeserializeECDSAPubKey deserializes a serialized ECDSA public key, verifying it's valid.
-// it supports both compressed(33 bytes) and uncompressed(65 bytes) public keys.
-// it does not support hybrid(65 bytes) keys.
+// it supports only compressed(33 bytes) public keys.
+// it does not support uncompressed(65 bytes) or hybrid(65 bytes) keys.
 func DeserializeECDSAPubKey(serializedPubKey []byte) (*ECDSAPublicKey, error) {
 	if len(serializedPubKey) != SerializedECDSAPublicKeySize {
 		return nil, errors.New(fmt.Sprintf("serializedPubKey has to be %d bytes, instead got :%d", SerializedECDSAPublicKeySize, len(serializedPubKey)))

@@ -19,7 +19,7 @@ type SchnorrPublicKey struct {
 	init   bool
 }
 
-// SerializedSchnorrPublicKey is a is a byte array representing the storage representation of a compressed or uncompressed SchnorrPublicKey
+// SerializedSchnorrPublicKey is a is a byte array representing the storage representation of a SchnorrPublicKey
 type SerializedSchnorrPublicKey [SerializedSchnorrPublicKeySize]byte
 
 // IsEqual returns true if target is the same as key.
@@ -71,8 +71,6 @@ func (key *SchnorrPublicKey) SchnorrVerify(hash *Hash, signature *SchnorrSignatu
 }
 
 // DeserializeSchnorrPubKey deserializes a serialized schnorr public key, verifying it's valid.
-// it supports both compressed(33 bytes) and uncompressed(65 bytes) public keys.
-// it does not support hybrid(65 bytes) keys.
 func DeserializeSchnorrPubKey(serializedPubKey []byte) (*SchnorrPublicKey, error) {
 	if len(serializedPubKey) != SerializedSchnorrPublicKeySize {
 		return nil, errors.New(fmt.Sprintf("serializedPubKey has to be %d bytes, instead got :%d", SerializedSchnorrPublicKeySize, len(serializedPubKey)))

@@ -8,8 +8,7 @@ import (
 	"unsafe"
 )
 
-// ECDSAPrivateKey is a type representing a Secp256k1 private key.
-// This private key can be used to create Schnorr/ECDSA signatures
+// ECDSAPrivateKey is a type representing a Secp256k1 ECDSA private key.
 type ECDSAPrivateKey struct {
 	privateKey [SerializedPrivateKeySize]byte
 	init       bool
@@ -92,12 +91,15 @@ func GenerateECDSAPrivateKey() (key *ECDSAPrivateKey, err error) {
 	cPtr := (*C.uchar)(&key.privateKey[0])
 	for {
 		n, tmpErr := rand.Read(key.privateKey[:])
-		if tmpErr != nil || n != len(key.privateKey) {
+		if tmpErr != nil {
 			return nil, tmpErr
+		}
+		if n != len(key.privateKey) {
+			panic("The standard library promises that this should never happen")
 		}
 		ret := C.secp256k1_ec_seckey_verify(C.secp256k1_context_no_precomp, cPtr)
 		if ret == 1 {
-			return
+			return key, nil
 		}
 	}
 }
