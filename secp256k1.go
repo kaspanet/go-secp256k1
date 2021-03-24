@@ -4,8 +4,7 @@ package secp256k1
 // // Including the headers and code, and defining the default macros
 // #cgo CFLAGS: -I./depend/secp256k1 -I./depend/secp256k1/src/
 // #cgo CFLAGS: -DSECP256K1_BUILD=1 -DECMULT_WINDOW_SIZE=15 -DENABLE_MODULE_SCHNORRSIG=1 -DENABLE_MODULE_EXTRAKEYS=1
-// // Consider using libgmp. these macros are set to use the slower in-project implementation of nums
-// #cgo CFLAGS: -DUSE_NUM_NONE=1 -DUSE_FIELD_INV_BUILTIN=1 -DUSE_SCALAR_INV_BUILTIN=1 -DECMULT_GEN_PREC_BITS=4
+// #cgo CFLAGS: -DECMULT_GEN_PREC_BITS=4
 // // x86_64 can use the Assembly implementation.
 // #cgo amd64 CFLAGS: -DUSE_ASM_X86_64=1
 // #include "./depend/secp256k1/include/secp256k1.h"
