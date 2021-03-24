@@ -9,7 +9,6 @@
 
 #include "assumptions.h"
 #include "util.h"
-#include "num_impl.h"
 #include "field_impl.h"
 #include "scalar_impl.h"
 #include "group_impl.h"
@@ -761,10 +760,6 @@ int secp256k1_ec_pubkey_combine(const secp256k1_context* ctx, secp256k1_pubkey *
 
 #ifdef ENABLE_MODULE_ECDH
 # include "modules/ecdh/main_impl.h"
-#endif
-
-#ifdef ENABLE_MODULE_MULTISET
-# include "modules/multiset/main_impl.h"
 #endif
 
 #ifdef ENABLE_MODULE_RECOVERY
