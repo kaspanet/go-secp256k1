@@ -1,6 +1,7 @@
 package secp256k1
 
 import (
+	"bytes"
 	"fmt"
 	"math/big"
 	"math/rand"
@@ -49,6 +50,48 @@ func fastGenerateTweak(t testing.TB, r *rand.Rand) *[32]byte {
 		if err == nil {
 			return &buf
 		}
+	}
+}
+
+func TestECDSAPublicKey_ToSchnorr(t *testing.T) {
+	r := rand.New(rand.NewSource(42))
+	serializedPrivKey := (*SerializedPrivateKey)(fastGenerateTweak(t, r))
+	ecdsaPrivKey, err := DeserializeECDSAPrivateKey(serializedPrivKey)
+	if err != nil {
+		t.Fatalf("A valid tweak should be a valid private key: '%s'", err)
+	}
+	schnorrKeyPair, err := DeserializeSchnorrPrivateKey(serializedPrivKey)
+	if err != nil {
+		t.Fatalf("A valid tweak should be a valid private key: '%s'", err)
+	}
+	ecdsaPubKey, err := ecdsaPrivKey.ECDSAPublicKey()
+	if err != nil {
+		t.Fatalf("A valid privkey should convert to a pubkey: '%s'", err)
+	}
+	schnorrPublicKey, err := schnorrKeyPair.SchnorrPublicKey()
+	if err != nil {
+		t.Fatalf("A valid privkey should convert to a pubkey: '%s'", err)
+	}
+	convertedSchnorrPublicKey, err := ecdsaPubKey.ToSchnorr()
+	if err != nil {
+		t.Fatalf("A valid ECDSA public key should convert to a valid schnorr public key: '%s'", err)
+	}
+	if !schnorrPublicKey.IsEqual(convertedSchnorrPublicKey) {
+		t.Fatalf("Expected %s == %s", schnorrPublicKey, convertedSchnorrPublicKey)
+	}
+
+	serializedECDSAPubKey, err := ecdsaPubKey.Serialize()
+	if err != nil {
+		t.Fatalf("A valid pubkey should serialize: '%s'", err)
+	}
+	serializedSchnorrPubKey, err := schnorrPublicKey.Serialize()
+	if err != nil {
+		t.Fatalf("A valid pubkey should serialize: '%s'", err)
+	}
+
+	// a schnorr pubkey is an ecdsa pubkey without the parity bit at the start.
+	if !bytes.Equal(serializedECDSAPubKey[1:], serializedSchnorrPubKey[:]) {
+		t.Fatalf("Expected %x == %x", serializedECDSAPubKey[1:], serializedSchnorrPubKey[:])
 	}
 }
 
