@@ -1,6 +1,7 @@
 package secp256k1
 
 // #include "./depend/secp256k1/include/secp256k1.h"
+// #include "./depend/secp256k1/include/secp256k1_extrakeys.h"
 import "C"
 import (
 	"encoding/hex"
@@ -128,4 +129,19 @@ func (key *ECDSAPublicKey) Negate() error {
 		panic("failed Negating the public key. Should never happen")
 	}
 	return nil
+}
+
+// ToSchnorr converts an ECDSA public key to a schnorr public key
+// Note: You shouldn't sign with the same key in ECDSA and Schnorr signatures.
+// this function is for convenience when using BIP-32
+func (key *ECDSAPublicKey) ToSchnorr() (*SchnorrPublicKey, error) {
+	if !key.init {
+		return nil, errors.WithStack(errNonInitializedKey)
+	}
+	schnorrPubKey := SchnorrPublicKey{init: true}
+	ret := C.secp256k1_xonly_pubkey_from_pubkey(C.secp256k1_context_no_precomp, &schnorrPubKey.pubkey, nil, &key.pubkey)
+	if ret != 1 {
+		panic("failed converting an ECDSA key to a schnorr key. Should never happen")
+	}
+	return &schnorrPubKey, nil
 }
