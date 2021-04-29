@@ -123,7 +123,7 @@ func (key *ECDSAPrivateKey) Negate() error {
 	return nil
 }
 
-// Add a tweak to the public key by doing `key + tweak % Group Order`. this adds it in place.
+// Add a tweak to the private key by doing `key + tweak % Group Order`. this adds it in place.
 // This is meant for creating BIP-32(HD) wallets
 func (key *ECDSAPrivateKey) Add(tweak [32]byte) error {
 	if !key.init {
@@ -136,4 +136,14 @@ func (key *ECDSAPrivateKey) Add(tweak [32]byte) error {
 		return errors.New("failed Adding to private key. Tweak is bigger than the order or the complement of the private key")
 	}
 	return nil
+}
+
+// ToSchnorr converts an ECDSA private key to a schnorr keypair
+// Note: You shouldn't sign using the same key in both ECDSA and Schnorr signatures.
+// this function is for convenience when using BIP-32
+func (key *ECDSAPrivateKey) ToSchnorr() (*SchnorrKeyPair, error) {
+	if !key.init {
+		return nil, errors.WithStack(errNonInitializedKey)
+	}
+	return DeserializeSchnorrPrivateKey((*SerializedPrivateKey)(&key.privateKey))
 }
